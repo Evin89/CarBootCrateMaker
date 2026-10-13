@@ -83,7 +83,7 @@ label{font-size:13px;color:var(--muted)}
 .trunk-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
 @media (max-width:760px){.trunk-grid{grid-template-columns:1fr}}
 .trunk-fig{padding:16px;min-width:0}
-.trunk-fig svg{width:100%;height:auto;display:block;max-height:560px}
+.trunk-fig svg{width:100%;height:auto;display:block;max-height:520px}
 .side{padding:16px;display:flex;flex-direction:column;gap:14px}
 .dim-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
 .notes{display:flex;flex-direction:column;gap:6px;font-size:13.5px;margin:0;padding:0;list-style:none}
@@ -147,6 +147,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 /* svg classes */
 .s-trunk{fill:var(--panel);stroke:var(--ink);stroke-width:2}
 .s-arch{fill:var(--line-strong)}
+.s-slope{fill:var(--line);opacity:.6}
 .est{font-size:11px;color:var(--warn);font-weight:600;white-space:nowrap}
 .s-crate{fill:var(--ply);stroke:var(--ply-edge);stroke-width:2}
 .s-crate.over{fill:var(--bad-soft);stroke:var(--bad)}
@@ -233,12 +234,12 @@ const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires'
 const BAK_CATS=['Accu & lader','Accessoires','Handgereedschap'];
 const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
   binT:6,binFinger:20,dividerH:0,
-  laserBed:[813,508],cncSheet:[2440,1220],trunk:{model:'',w:1000,d:850,h:450,archW:0,archFrom:200,archLen:400,dFolded:0,seat:'up',openW:0,openH:0,est:[]}};
+  laserBed:[813,508],cncSheet:[2440,1220],trunk:{model:'',w:1000,d:850,h:450,archW:0,archFrom:200,archLen:400,dFolded:0,dTop:0,seat:'up',openW:0,openH:0,est:[]}};
 /* Bekende auto's. est = velden die geschat zijn en nagemeten moeten worden. */
 const CARS={
-  c3ii:{label:'Citroën C3 II (2016–2024)',w:1030,archW:990,d:740,dFolded:1100,openW:1030,openH:880,h:520,archFrom:250,archLen:420,
-    est:['h','archFrom','archLen'],
-    note:'Gepubliceerde metingen van dezelfde generatie (ca. 300 liter). Hoogte onder de hoedenplank en de plek van de wielkasten zijn schattingen: meet die na.'}
+  c3ii:{label:'Citroën C3 II (2016–2024)',w:1060,archW:0,d:740,dTop:500,h:550,dFolded:1100,openW:1030,openH:880,archFrom:0,archLen:0,
+    est:['d'],
+    note:'Nagemeten: 1060 mm breed zonder uitstekende wielkasten, hoedenplank op 550 mm, en door de schuine rugleuning ca. 500 mm diep op die hoogte. De vloerdiepte (740 mm) komt uit gepubliceerde metingen.'}
 };
 const DENSITY=680; // kg/m³ berken multiplex
 const BIN_GAP=3;   // speling rond losse bakken
@@ -455,7 +456,7 @@ function fitCrate(c){
   }
   // Probeer breedtes vanaf de huidige; voorkeur voor een maat waarbij alle panelen op de plaat passen, dan de kleinste vloer.
   const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
-  const tg=trunkGeom(),inTrunk=(L,W,H)=>(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W}],tg.W,tg.D,tg.obst,0).placed.length===1;
+  const tg=trunkGeom(),inTrunk=(L,W,H)=>(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W,maxD:tg.depthAt(H)}],tg.W,tg.D,tg.obst,0).placed.length===1;
   let best=null,atW=null;
   for(let W=+c.W;W<=+c.W+1000;W+=10){
     const tmp=Object.assign({},c,{W,H:5000});
@@ -696,7 +697,10 @@ function trunkGeom(){
   const obst=[],aw=+tr.archW>0&&+tr.archW<W?(W-tr.archW)/2:0;
   if(aw>0){const y0=+tr.archFrom||0,y1=Math.min(D,y0+(+tr.archLen||0));
     if(y1>y0)obst.push({x:0,y:y0,w:aw,h:y1-y0},{x:W-aw,y:y0,w:aw,h:y1-y0})}
-  return{W,D,H:+tr.h||0,obst,folded};
+  const H=+tr.h||0,dTop=+tr.dTop||0,sloped=!folded&&dTop>0&&H>0&&dTop<D;
+  // schuine rugleuning: lineair van vloerdiepte D naar dTop op hoedenplankhoogte
+  const depthAt=hh=>sloped?D-(D-dTop)*Math.min(Math.max(hh,0),H)/H:D;
+  return{W,D,H,obst,folded,sloped,dTop,depthAt};
 }
 /* Kratten op de vloer plaatsen met obstakels (wielkasten): telkens de plek het dichtst bij de achterklep, dan links. */
 function packTrunk(rects,W,D,obst,gap){
@@ -710,7 +714,7 @@ function packTrunk(rects,W,D,obst,gap){
       const cx=new Set([0,W-w]),cy=new Set([0,D-h]);
       all.forEach(o=>{cx.add(o.x+o.w+g(o));cx.add(o.x-g(o)-w);cy.add(o.y+o.h+g(o));cy.add(o.y-g(o)-h)});
       for(const y of cy)for(const x of cx){
-        if(x<-1e-6||y<-1e-6||x+w>W+1e-6||y+h>D+1e-6||hit(x,y,w,h))continue;
+        if(x<-1e-6||y<-1e-6||x+w>W+1e-6||y+h>Math.min(D,r.maxD||D)+1e-6||hit(x,y,w,h))continue;
         if(!best||y<best.y-1e-6||(Math.abs(y-best.y)<1e-6&&x<best.x))best={x,y,w,h,rot,it:r};
       }
     }
@@ -724,14 +728,15 @@ function passesOpening(c){
   return a<=Math.min(ow,oh)&&b<=Math.max(ow,oh);
 }
 function renderTrunk(){
-  const tr=S().trunk,{W,D,H,obst,folded}=trunkGeom();
+  const tr=S().trunk,tg=trunkGeom(),{W,D,H,obst,folded}=tg;
   const valid=state.crates.filter(c=>c.L>0&&c.W>0);
-  const res=packTrunk(valid.map(c=>({w:+c.L,h:+c.W,c})),W,D,obst,5);
+  const res=packTrunk(valid.map(c=>({w:+c.L,h:+c.W,c,maxD:tg.depthAt(+c.H)})),W,D,obst,5);
   const used=res.placed.reduce((a,p)=>a+p.w*p.h,0),floor=W*D-obst.reduce((a,o)=>a+o.w*o.h,0);
   res.usedPct=used/floor*100;
   const pad=Math.max(W,D)*0.07,fs=Math.max(W,D)/42;
   let g=`<svg viewBox="${-pad} ${-pad} ${W+2*pad} ${D+2*pad*1.6}" role="img" aria-label="Bovenaanzicht kofferbak met kratten">`;
   g+=`<rect class="s-trunk" x="0" y="0" width="${W}" height="${D}" rx="${fs*0.4}"/>`;
+  if(tg.sloped)g+=`<rect class="s-slope" x="0" y="0" width="${W}" height="${D-tg.dTop}"/><line class="s-dim" x1="0" y1="${D-tg.dTop}" x2="${W}" y2="${D-tg.dTop}" stroke-dasharray="${fs*0.4} ${fs*0.3}" stroke-width="${fs*0.08}"/><text class="s-sub" x="${W-fs*0.3}" y="${D-tg.dTop-fs*0.35}" font-size="${fs*0.6}" text-anchor="end">rugleuning op ${fmt(H)} mm hoogte · ${fmt(tg.dTop)} mm diep</text>`;
   obst.forEach(o=>{g+=`<rect class="s-arch" x="${o.x}" y="${D-o.y-o.h}" width="${o.w}" height="${o.h}"><title>Wielkast</title></rect>`});
   g+=`<text class="s-sub" x="${W/2}" y="${-pad*0.35}" font-size="${fs*0.8}" text-anchor="middle">${folded?'voorstoelen · achterbank plat':'achterbank'} · ${fmt(W)} mm breed</text>`;
   g+=`<line class="s-dim" x1="0" y1="${D+pad*0.45}" x2="${W}" y2="${D+pad*0.45}" stroke-width="${fs*0.12}"/>`;
@@ -747,6 +752,7 @@ function renderTrunk(){
   obst.forEach((o,i)=>{const x=i?o.x-fs*0.3:o.x+o.w+fs*0.3;
     g+=`<text class="s-sub" x="${x}" y="${D-o.y-o.h/2}" font-size="${fs*0.6}" text-anchor="${i?'end':'start'}" dominant-baseline="middle">wielkast</text>`});
   g+='</svg>';
+  g+=sideView(tg,res.placed);
   $('#trunkFig').innerHTML=g;
   const notes=[];
   if(valid.length){
@@ -759,6 +765,20 @@ function renderTrunk(){
   res.tooTall=valid.filter(c=>(H>0&&+c.H>H)||!passesOpening(c)).length;
   return res;
 }
+/* zijaanzicht: achterklep rechts, achterbank links */
+function sideView(tg,placed){
+  const{D,H,dTop,sloped}=tg,hMax=Math.max(H||0,...placed.map(p=>+p.it.c.H),100),fs=Math.max(D,hMax)/30,pad=fs*1.6;
+  let g=`<svg viewBox="${-pad} ${-pad} ${D+2*pad} ${hMax+pad*2.4}" role="img" aria-label="Zijaanzicht kofferbak" style="margin-top:12px;max-height:260px">`;
+  const Y=z=>hMax-z;
+  const seatTop=sloped?D-dTop:0;
+  g+=`<path class="s-trunk" d="M0 ${Y(0)}H${D}V${Y(H||hMax)}H${seatTop}L0 ${Y(0)}Z" style="stroke-width:${fs*0.12}"/>`;
+  if(H)g+=`<text class="s-sub" x="${D-fs*0.3}" y="${Y(H)-fs*0.4}" font-size="${fs*0.7}" text-anchor="end">hoedenplank ${fmt(H)} mm</text>`;
+  placed.forEach(p=>{const c=p.it.c,x=D-p.y-p.h,bad=(H&&+c.H>H);
+    g+=`<rect class="s-crate ${bad?'over':''}" x="${x}" y="${Y(+c.H)}" width="${p.h}" height="${+c.H}" style="fill-opacity:.75;stroke-width:${fs*0.08}"><title>${esc(c.name)}</title></rect>`});
+  g+=`<text class="s-sub" x="${fs*0.3}" y="${Y(0)+fs*1.1}" font-size="${fs*0.7}">achterbank</text><text class="s-txt" x="${D}" y="${Y(0)+fs*1.1}" font-size="${fs*0.75}" text-anchor="end">ACHTERKLEP</text>`;
+  g+=`<text class="s-sub" x="${D/2}" y="${-pad*0.3}" font-size="${fs*0.7}" text-anchor="middle">zijaanzicht · vloer ${fmt(D)} mm diep</text></svg>`;
+  return g;
+}
 function renderTrunkForm(){
   const tr=S().trunk,car=CARS[tr.model],est=k=>(tr.est||[]).includes(k)?' <span class="est" title="Schatting: meet dit na">≈ schatting</span>':'';
   const f=(k,label)=>`<div class="field"><label for="tr-${k}">${label}${est(k)}</label><input type="number" step="any" id="tr-${k}" value="${tr[k]}" data-s="set" data-k="trunk.${k}"></div>`;
@@ -767,12 +787,12 @@ function renderTrunkForm(){
     ${car?`<p class="hint">${car.note}</p>`:''}
     <div class="seg" role="group" aria-label="Achterbank"><button data-act="seat" data-v="up" aria-pressed="${tr.seat!=='down'}">Achterbank omhoog</button><button data-act="seat" data-v="down" aria-pressed="${tr.seat==='down'}">Achterbank plat</button></div>
     <h3>Vloer</h3>
-    <div class="dim-row">${f('w','Breedte')}${f('d','Diepte')}${f('dFolded','Diepte, bank plat')}</div>
+    <div class="dim-row">${f('w','Breedte')}${f('d','Diepte vloer')}${f('dTop','Diepte bovenin')}${f('dFolded','Diepte, bank plat')}</div>
     <h3>Wielkasten</h3>
     <div class="dim-row">${f('archW','Breedte ertussen')}${f('archFrom','Vanaf achterklep')}${f('archLen','Lengte')}</div>
     <h3>Hoogte en opening</h3>
     <div class="dim-row">${f('h','Bruikbare hoogte')}${f('openW','Opening breed')}${f('openH','Opening hoog')}</div>
-    <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep.</p>`;
+    <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep. Diepte bovenin = diepte op hoedenplankhoogte; leeg of 0 als de rugleuning recht staat.</p>`;
 }
 function toolRect(r,fs,tall){
   const tl=r.it.tool;
