@@ -1,0 +1,715 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>[hidden]{display:none!important}body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+<title>Kofferbakkratten</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: werkplaats-tool op een snijmat — overzicht (kofferbak) bovenaan, dan kratten, gereedschap, snijbestanden, instellingen. */
+:root{
+  --bg:#eef1ed; --panel:#fbfcfa; --ink:#1c2320; --muted:#5b6661; --line:#d3d9d3; --line-strong:#b9c2bb;
+  --accent:#0d6b5a; --accent-ink:#ffffff; --accent-soft:#d7ebe5;
+  --ply:#e6cc9f; --ply-edge:#b38950; --sheet:#f6efe2; --cut:#d4251c; --engrave:#1d4fd0;
+  --ok:#2c7a3c; --warn:#a86b12; --bad:#bf3328; --ok-soft:#dcefdf; --warn-soft:#f6e8cf; --bad-soft:#f7dcd8;
+  --c0:#c98f4a; --c1:#4f86b8; --c2:#7a9e4c; --c3:#b8605a; --c4:#8a6fb0; --c5:#4c9c97; --c6:#8b8f86;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#121614; --panel:#1a201d; --ink:#e3e8e4; --muted:#98a49e; --line:#2b3430; --line-strong:#3b4641;
+  --accent:#45b39c; --accent-ink:#0b1512; --accent-soft:#1d3a33;
+  --ply:#7d6340; --ply-edge:#c9a46c; --sheet:#262420; --cut:#ff5d50; --engrave:#86a6ff;
+  --ok:#6cc47d; --warn:#e0a84a; --bad:#ff7a6e; --ok-soft:#1d3323; --warn-soft:#3a2d17; --bad-soft:#3d1f1c;
+  --c0:#c99a5f; --c1:#6b9fd0; --c2:#93b86a; --c3:#d07b74; --c4:#a68ccc; --c5:#62b5af; --c6:#9ca197;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121614; --panel:#1a201d; --ink:#e3e8e4; --muted:#98a49e; --line:#2b3430; --line-strong:#3b4641;
+  --accent:#45b39c; --accent-ink:#0b1512; --accent-soft:#1d3a33;
+  --ply:#7d6340; --ply-edge:#c9a46c; --sheet:#262420; --cut:#ff5d50; --engrave:#86a6ff;
+  --ok:#6cc47d; --warn:#e0a84a; --bad:#ff7a6e; --ok-soft:#1d3323; --warn-soft:#3a2d17; --bad-soft:#3d1f1c;
+  --c0:#c99a5f; --c1:#6b9fd0; --c2:#93b86a; --c3:#d07b74; --c4:#a68ccc; --c5:#62b5af; --c6:#9ca197;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:28px 64px;display:flex;flex-direction:column;gap:36px}
+h1,h2,h3{font-family:var(--display);font-weight:600;letter-spacing:.01em;text-wrap:balance;margin:0;line-height:1.1}
+h1{font-size:clamp(34px,6vw,52px);font-weight:700}
+h2{font-size:28px}
+h3{font-size:20px}
+p{margin:0}
+.lede{color:var(--muted);max-width:62ch;margin-top:8px}
+.eyebrow{font-family:var(--display);text-transform:uppercase;letter-spacing:.12em;font-size:13px;color:var(--accent);font-weight:600}
+.num,input[type=number]{font-family:var(--mono);font-variant-numeric:tabular-nums}
+header{display:flex;flex-direction:column;gap:18px}
+.head-row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px}
+.save{font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+.save i{width:8px;height:8px;border-radius:50%;background:var(--line-strong);display:inline-block}
+.save.ok i{background:var(--ok)} .save.local i{background:var(--warn)}
+nav{display:flex;flex-wrap:wrap;gap:6px}
+nav a{font-family:var(--display);font-size:15px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink);text-decoration:none;padding:4px 10px;border:1px solid var(--line-strong);border-radius:3px}
+nav a:hover{border-color:var(--accent);color:var(--accent)}
+.chips{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+.chip{background:var(--panel);padding:12px 14px;display:flex;flex-direction:column;gap:2px;min-width:0}
+.chip b{font-family:var(--mono);font-weight:500;font-size:22px;font-variant-numeric:tabular-nums}
+.chip span{font-size:12.5px;color:var(--muted)}
+.chip.ok b{color:var(--ok)} .chip.bad b{color:var(--bad)} .chip.warn b{color:var(--warn)}
+section{display:flex;flex-direction:column;gap:16px;scroll-margin-top:16px}
+.sec-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;border-bottom:2px solid var(--ink);padding-bottom:8px}
+.sec-head p{color:var(--muted);font-size:14px;max-width:60ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:4px}
+button{font-family:var(--body);font-size:14px;cursor:pointer;border-radius:3px;border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);padding:6px 12px;line-height:1.3}
+button:hover{border-color:var(--ink)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:500}
+button.primary:hover{filter:brightness(1.08)}
+button.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+button.ghost:hover{color:var(--bad);border-color:var(--line)}
+button.danger{color:var(--bad);border-color:var(--bad)}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input,select{font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line-strong);border-radius:3px;padding:5px 7px;min-width:0}
+input[type=number]{width:72px;text-align:right}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px;vertical-align:-3px}
+label{font-size:13px;color:var(--muted)}
+.field{display:flex;flex-direction:column;gap:3px}
+.unit{font-size:12px;color:var(--muted);font-family:var(--mono)}
+
+/* trunk */
+.trunk-grid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;align-items:start}
+@media (max-width:760px){.trunk-grid{grid-template-columns:1fr}}
+.trunk-fig{padding:16px;min-width:0}
+.trunk-fig svg{width:100%;height:auto;display:block;max-height:560px}
+.side{padding:16px;display:flex;flex-direction:column;gap:14px}
+.dim-row{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.notes{display:flex;flex-direction:column;gap:6px;font-size:13.5px;margin:0;padding:0;list-style:none}
+.notes li{padding:6px 10px;border-radius:3px;border-left:3px solid var(--line-strong);background:var(--bg)}
+.notes li.ok{border-color:var(--ok);background:var(--ok-soft)}
+.notes li.warn{border-color:var(--warn);background:var(--warn-soft)}
+.notes li.bad{border-color:var(--bad);background:var(--bad-soft)}
+
+/* crates */
+.crates{display:flex;flex-direction:column;gap:16px}
+.crate-head{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:flex-end;padding:14px 16px;border-bottom:1px solid var(--line)}
+.crate-name{font-family:var(--display);font-size:22px;font-weight:600;width:200px;background:transparent;border-color:transparent;padding:2px 6px}
+.crate-name:hover,.crate-name:focus{border-color:var(--line-strong);background:var(--bg)}
+.crate-head .spacer{flex:1}
+.crate-body{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:16px;padding:16px}
+@media (max-width:760px){.crate-body{grid-template-columns:1fr}}
+.crate-body figure{margin:0;display:flex;flex-direction:column;gap:6px;min-width:0}
+.crate-body svg{width:100%;height:auto;display:block;max-height:420px}
+figcaption{font-size:12.5px;color:var(--muted)}
+dl.specs{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:0;font-size:14px}
+dl.specs dt{color:var(--muted)}
+dl.specs dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12.5px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+.empty{padding:28px 20px;text-align:center;color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:12px}
+.empty b{color:var(--ink);font-family:var(--display);font-size:22px;font-weight:600}
+
+/* tools table */
+.table-wrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+th{font-family:var(--display);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:13px;color:var(--muted);text-align:left;padding:8px 6px;border-bottom:1px solid var(--line-strong);white-space:nowrap}
+th.r{text-align:right}
+td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+td input[type=text]{width:100%;min-width:160px}
+td input[type=number]{width:68px}
+td select{max-width:170px}
+tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
+.swatch{width:10px;height:10px;border-radius:2px;display:inline-block;margin-right:6px;vertical-align:0}
+.tfoot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:12px 16px}
+.tfoot span{font-size:13px;color:var(--muted)}
+
+/* sheets */
+.sheet-ctl{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.sheets{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;padding:16px}
+@media (max-width:420px){.sheets{grid-template-columns:1fr}}
+.sheet{display:flex;flex-direction:column;gap:8px;min-width:0}
+.sheet svg{width:100%;height:auto;display:block;border:1px solid var(--line-strong)}
+.sheet-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+
+/* settings */
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.set-grid .card{padding:16px;display:flex;flex-direction:column;gap:12px}
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:3px;overflow:hidden}
+.seg button{border:0;border-radius:0;padding:6px 14px}
+.seg button[aria-pressed=true]{background:var(--accent);color:var(--accent-ink)}
+.hint{font-size:12.5px;color:var(--muted)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:3px;font-size:14px;z-index:5;max-width:calc(100% - 32px)}
+
+/* svg classes */
+.s-trunk{fill:var(--panel);stroke:var(--ink);stroke-width:2}
+.s-crate{fill:var(--ply);stroke:var(--ply-edge);stroke-width:2}
+.s-crate.over{fill:var(--bad-soft);stroke:var(--bad)}
+.s-txt{fill:var(--ink);font-family:var(--display);font-weight:600}
+.s-sub{fill:var(--muted);font-family:var(--mono)}
+.s-dim{stroke:var(--muted);stroke-width:1;fill:none}
+.s-inner{fill:var(--bg);stroke:var(--ply-edge);stroke-width:1.5}
+.s-wall{fill:var(--ply)}
+.s-tool{stroke:var(--ink);stroke-opacity:.35;stroke-width:1}
+.s-sheet{fill:var(--sheet);stroke:var(--line-strong)}
+.s-part{fill:var(--ply);stroke:var(--cut);fill-rule:evenodd}
+.s-label{fill:var(--engrave);font-family:Arial,sans-serif}
+@media (prefers-reduced-motion:no-preference){button{transition:filter .15s,border-color .15s}}
+</style>
+
+<div class="wrap" id="app">
+  <header>
+    <div class="head-row">
+      <div>
+        <div class="eyebrow">Inbouw achterin · multiplex met vingerverbindingen</div>
+        <h1>Kofferbakkratten</h1>
+        <p class="lede">Meet je gereedschap op, deel het in over kratten en zie direct of alles in de kofferbak past. De snijbestanden (SVG) voor de lasersnijder of CNC worden uit dezelfde maten gemaakt.</p>
+      </div>
+      <div class="save" id="save"><i></i><span>Laden…</span></div>
+    </div>
+    <nav>
+      <a href="#kofferbak">Kofferbak</a><a href="#kratten">Kratten</a><a href="#gereedschap">Gereedschap</a><a href="#snijbestanden">Snijbestanden</a><a href="#instellingen">Instellingen</a>
+    </nav>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <section id="kofferbak">
+    <div class="sec-head"><h2>Kofferbak</h2><p>Bovenaanzicht. De kratten worden automatisch zo compact mogelijk geschikt; de achterklep zit aan de onderkant.</p></div>
+    <div class="trunk-grid">
+      <div class="card trunk-fig" id="trunkFig"></div>
+      <div class="card side">
+        <h3>Binnenmaten</h3>
+        <div class="dim-row">
+          <div class="field"><label for="tr-w">Breedte</label><input type="number" step="any" id="tr-w" data-s="set" data-k="trunk.w"></div>
+          <div class="field"><label for="tr-d">Diepte</label><input type="number" step="any" id="tr-d" data-s="set" data-k="trunk.d"></div>
+          <div class="field"><label for="tr-h">Hoogte</label><input type="number" step="any" id="tr-h" data-s="set" data-k="trunk.h"></div>
+        </div>
+        <p class="hint">In mm. Meet de smalste plek tussen de wielkasten als breedte, en de hoogte tot onder de hoedenplank.</p>
+        <ul class="notes" id="trunkNotes"></ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="kratten">
+    <div class="sec-head"><h2>Kratten</h2><p>Buitenmaten in mm. De binnenmaat is lengte en breedte min 2× plaatdikte, hoogte min 1× (de bodem).</p><button class="primary" data-act="addcrate">+ Krat</button></div>
+    <div class="crates" id="crates"></div>
+  </section>
+
+  <section id="gereedschap">
+    <div class="sec-head"><h2>Gereedschap</h2><p>L × B is het grondvlak zoals het in de krat staat, H is de hoogte. Gereedschap mag in de krat een kwartslag draaien.</p></div>
+    <div class="card">
+      <div class="table-wrap"><table>
+        <thead><tr><th>Naam</th><th>Soort</th><th class="r">L</th><th class="r">B</th><th class="r">H</th><th class="r">Aantal</th><th>Krat</th><th></th></tr></thead>
+        <tbody id="tools"></tbody>
+      </table></div>
+      <div class="tfoot"><button class="primary" data-act="addtool">+ Gereedschap</button><span id="toolsFoot"></span></div>
+    </div>
+  </section>
+
+  <section id="snijbestanden">
+    <div class="sec-head"><h2>Snijbestanden</h2><p id="sheetIntro"></p></div>
+    <div class="card">
+      <div class="sheet-ctl" id="sheetCtl"></div>
+      <div id="sheets"></div>
+    </div>
+  </section>
+
+  <section id="instellingen">
+    <div class="sec-head"><h2>Instellingen</h2><p>Meet je plaat na met een schuifmaat: 9 mm multiplex is in de praktijk vaak 8,7 tot 9,3 mm.</p></div>
+    <div class="set-grid" id="settings"></div>
+  </section>
+</div>
+
+<script>
+(function(){
+"use strict";
+const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires','Handgereedschap','Overig'];
+const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
+  laserBed:[813,508],cncSheet:[2440,1220],trunk:{w:1000,d:850,h:450}};
+const DENSITY=680; // kg/m³ berken multiplex
+let state={v:1,settings:clone(DEF),crates:[],tools:[]};
+let excluded=new Set();
+let db=null, docRef=null, dl=null, lastSaved='', saveTimer=null, writeChain=Promise.resolve(), pendingRemote=null, storeMode='';
+const $=s=>document.querySelector(s);
+const LOCAL=!(window.claude&&typeof window.claude.use==='function');
+function saveFile(name,text,type){
+  if(dl)return dl.save({filename:name,data:text});
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;
+  document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
+  return Promise.resolve();
+}
+function clone(o){return JSON.parse(JSON.stringify(o))}
+function uid(){return Math.random().toString(36).slice(2,9)}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function r1(n){return Math.round(n*10)/10}
+function fmt(n,d=0){return Number(n).toLocaleString('nl-NL',{minimumFractionDigits:d,maximumFractionDigits:d})}
+function S(){return state.settings}
+function normalize(d){
+  const s=Object.assign(clone(DEF),d&&d.settings||{});
+  s.trunk=Object.assign(clone(DEF.trunk),d&&d.settings&&d.settings.trunk||{});
+  return {v:1,settings:s,crates:Array.isArray(d&&d.crates)?d.crates:[],tools:Array.isArray(d&&d.tools)?d.tools:[]};
+}
+
+/* ---------- opslag ---------- */
+function setSave(mode,text){const el=$('#save');el.className='save '+mode;el.querySelector('span').textContent=text}
+function lsGet(){try{const j=localStorage.getItem('kofferbakkratten');return j?JSON.parse(j):null}catch(e){return null}}
+function lsSet(j){try{localStorage.setItem('kofferbakkratten',j)}catch(e){}}
+function scheduleSave(){
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{
+    const j=JSON.stringify(state);
+    lsSet(j);
+    if(!docRef){setSave('local','Opgeslagen in deze browser');return}
+    if(j===lastSaved)return;
+    lastSaved=j;
+    setSave('','Opslaan…');
+    writeChain=writeChain.then(()=>docRef.set(JSON.parse(j))).then(()=>setSave('ok','Opgeslagen')).catch(e=>{
+      setSave('local',e&&e.code==='invalid_argument'?'Alleen-lezen: wijzigingen blijven in deze browser':'Opslaan mislukt, staat in deze browser');
+    });
+  },700);
+}
+function applyRemote(d){
+  const ae=document.activeElement;
+  if(ae&&ae.closest&&ae.closest('#app')&&/INPUT|SELECT/.test(ae.tagName)){pendingRemote=d;return}
+  state=normalize(d);renderAll();
+}
+document.addEventListener('focusout',()=>{setTimeout(()=>{if(pendingRemote){const d=pendingRemote;pendingRemote=null;applyRemote(d)}},50)});
+async function initStore(){
+  const cached=lsGet();
+  if(cached){state=normalize(cached);renderAll()}
+  const c=window.claude;
+  if(c&&typeof c.use==='function'){
+    try{db=await c.use('db')}catch(e){db=null}
+    try{dl=await c.use('downloads')}catch(e){dl=null}
+  }
+  if(dl)renderSheets();
+  if(!db){storeMode='local';setSave('local','Opgeslagen in deze browser');renderAll();return}
+  docRef=db.doc('state/main');
+  setSave('ok','Verbonden');
+  docRef.onSnapshot(snap=>{
+    if(snap.metadata&&snap.metadata.hasPendingWrites)return;
+    if(!snap.exists){
+      // Nog niets opgeslagen: neem lokale gegevens mee als die er zijn.
+      if(cached&&(cached.tools||[]).length+(cached.crates||[]).length){scheduleSave()}
+      setSave('ok','Gekoppeld, nog leeg');return;
+    }
+    const d=snap.data(), j=JSON.stringify(normalize(d));
+    if(j===lastSaved)return;
+    lastSaved=j;lsSet(j);applyRemote(d);setSave('ok','Opgeslagen');
+  },()=>{docRef=null;setSave('local','Alleen in deze browser opgeslagen')});
+}
+
+/* ---------- inpakken (plankjes-methode) ---------- */
+function packBin(items,W,H,gap,portrait){
+  const list=items.map(it=>{let w=it.w,h=it.h,rot=false;if((h>w)!==!!portrait&&h!==w){[w,h]=[h,w];rot=true}
+    if(w>W&&h<=W&&w<=H){[w,h]=[h,w];rot=!rot}return{it,w,h,rot}}).sort((a,b)=>b.h-a.h||b.w-a.w);
+  const shelves=[];let y=0;const placed=[],left=[];
+  for(const p of list){
+    let done=false;
+    for(const s of shelves){
+      if(s.x+p.w<=W+1e-6&&p.h<=s.h+1e-6){placed.push({x:s.x,y:s.y,w:p.w,h:p.h,rot:p.rot,it:p.it});s.x+=p.w+gap;done=true;break}
+      if(s.x+p.h<=W+1e-6&&p.w<=s.h+1e-6){placed.push({x:s.x,y:s.y,w:p.h,h:p.w,rot:!p.rot,it:p.it});s.x+=p.h+gap;done=true;break}
+    }
+    if(done)continue;
+    if(p.w<=W+1e-6&&y+p.h<=H+1e-6){shelves.push({y,h:p.h,x:p.w+gap});placed.push({x:0,y,w:p.w,h:p.h,rot:p.rot,it:p.it});y+=p.h+gap}
+    else if(p.h<=W+1e-6&&y+p.w<=H+1e-6){shelves.push({y,h:p.w,x:p.h+gap});placed.push({x:0,y,w:p.h,h:p.w,rot:!p.rot,it:p.it});y+=p.w+gap}
+    else left.push(p.it);
+  }
+  return{placed,left};
+}
+function toolItems(crateId){
+  const out=[];
+  state.tools.filter(t=>t.crate===crateId).forEach(t=>{const q=Math.max(1,Math.round(+t.qty||1));
+    for(let i=0;i<q;i++)out.push({w:+t.l||0,h:+t.w||0,H:+t.h||0,tool:t})});
+  return out.filter(i=>i.w>0&&i.h>0);
+}
+function crateInner(c){const t=S().t;return{L:c.L-2*t,W:c.W-2*t,H:c.H-t}}
+function packTools(c,items){
+  const s=S(),inn=crateInner(c),cl=s.clearance;
+  return packBin(items,inn.L-cl,inn.W-cl,cl);
+}
+function fitCrate(c){
+  const s=S(),items=toolItems(c.id);if(!items.length)return false;
+  const t=s.t,cl=s.clearance;
+  const minW=Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+2*cl;
+  let W=Math.max(c.W,Math.ceil(minW/5)*5);
+  const start=Math.ceil((Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+2*cl)/5)*5;
+  let found=null;
+  for(let L=start;L<=3000;L+=5){if(!packTools({L,W,H:c.H},items).left.length){found=L;break}}
+  if(found==null)return false;
+  c.L=found;c.W=W;
+  c.H=Math.ceil((Math.max(...items.map(i=>i.H))+cl+t)/5)*5;
+  return true;
+}
+
+/* ---------- vingerverbindingen ---------- */
+function segs(len,pre,preD,post,postD,ev,od){
+  const fw=Math.max(3*S().t*0+8,S().finger),out=[];
+  if(pre>0)out.push([0,pre,preD]);
+  const m=len-pre-post;let n=Math.round(m/fw);
+  if(n%2===0)n=(m/fw>n)?n+1:n-1;
+  if(n<3)n=m>=24?3:1;
+  const w=m/n;
+  for(let i=0;i<n;i++)out.push([pre+i*w,pre+(i+1)*w,i%2?od:ev]);
+  if(post>0)out.push([len-post,len,postD]);
+  return out;
+}
+function cratePanels(c){
+  const t=S().t,L=+c.L,W=+c.W,H=+c.H;
+  const vF=segs(H,t,0,0,0,0,t), vS=segs(H,t,t,0,0,t,0);
+  const front=()=>({w:L,h:H,edges:[segs(L,t,0,t,0,t,0),vF,[[0,L,0]],vF]});
+  const side=()=>({w:W,h:H,edges:[segs(W,t,t,t,t,t,0),vS,[[0,W,0]],vS],handle:!!c.handles});
+  const bx=segs(L,t,t,t,t,0,t), by=segs(W,t,t,t,t,0,t);
+  return[
+    Object.assign(front(),{name:'voorkant'}),Object.assign(front(),{name:'achterkant'}),
+    Object.assign(side(),{name:'zijkant L'}),Object.assign(side(),{name:'zijkant R'}),
+    {name:'bodem',w:L,h:W,edges:[bx,by,bx,by]}
+  ];
+}
+function outline(p){
+  const{w,h,edges}=p,rev=(sg,len)=>sg.map(([a,b,d])=>[len-b,len-a,d]).reverse();
+  const E=[{O:[0,0],u:[1,0],n:[0,1],len:w,s:edges[0]},{O:[w,0],u:[0,1],n:[-1,0],len:h,s:edges[1]},
+    {O:[w,h],u:[-1,0],n:[0,-1],len:w,s:rev(edges[2],w)},{O:[0,h],u:[0,-1],n:[1,0],len:h,s:rev(edges[3],h)}];
+  const pts=[];
+  E.forEach((e,i)=>{
+    const prev=E[(i+3)%4],next=E[(i+1)%4];
+    const s0=prev.s[prev.s.length-1][2],s1=e.len-next.s[0][2];
+    const P=(s,d)=>[e.O[0]+e.u[0]*s+e.n[0]*d,e.O[1]+e.u[1]*s+e.n[1]*d];
+    for(const[a,b,d]of e.s){const a2=Math.max(a,s0),b2=Math.min(b,s1);if(b2<a2-1e-9)continue;pts.push(P(a2,d),P(b2,d))}
+  });
+  return clean(pts);
+}
+function clean(pts){
+  const eq=(p,q)=>Math.abs(p[0]-q[0])<1e-6&&Math.abs(p[1]-q[1])<1e-6;
+  let o=[];for(const p of pts){if(o.length&&eq(o[o.length-1],p))continue;o.push(p)}
+  if(o.length>1&&eq(o[0],o[o.length-1]))o.pop();
+  let ch=true;while(ch&&o.length>3){ch=false;for(let i=0;i<o.length;i++){const a=o[(i-1+o.length)%o.length],b=o[i],c=o[(i+1)%o.length];
+    if(Math.abs((b[0]-a[0])*(c[1]-b[1])-(b[1]-a[1])*(c[0]-b[0]))<1e-9){o.splice(i,1);ch=true;break}}}
+  return o;
+}
+function area(p){let a=0;for(let i=0;i<p.length;i++){const q=p[i],r=p[(i+1)%p.length];a+=q[0]*r[1]-r[0]*q[1]}return a/2}
+function unit(a,b){const dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy)||1;return[dx/l,dy/l]}
+function offsetPoly(pts,k){
+  const sg=Math.sign(area(pts)),n=pts.length;
+  const out=d=>sg>0?[d[1],-d[0]]:[-d[1],d[0]];
+  return pts.map((p,i)=>{const a=unit(pts[(i-1+n)%n],p),b=unit(p,pts[(i+1)%n]),na=out(a),nb=out(b);
+    return[p[0]+k*(na[0]+nb[0]),p[1]+k*(na[1]+nb[1])]});
+}
+const f2=n=>(Math.round(n*1000)/1000).toString();
+function polyPath(pts,r){
+  const n=pts.length,A=area(pts);let d='';
+  for(let i=0;i<n;i++){
+    const P=pts[i],a=unit(pts[(i-1+n)%n],P),b=unit(P,pts[(i+1)%n]);
+    const cr=a[0]*b[1]-a[1]*b[0];
+    const cmd=i?'L':'M';
+    if(r>0&&Math.sign(cr)!==Math.sign(A)){
+      const q=Math.SQRT2*r,P1=[P[0]-a[0]*q,P[1]-a[1]*q],P2=[P[0]+b[0]*q,P[1]+b[1]*q];
+      const C=[P[0]+(b[0]-a[0])/Math.SQRT2*r,P[1]+(b[1]-a[1])/Math.SQRT2*r];
+      const u=[P1[0]-C[0],P1[1]-C[1]],v=[P[0]-C[0],P[1]-C[1]],sw=(u[0]*v[1]-u[1]*v[0])>0?1:0;
+      d+=`${cmd}${f2(P1[0])} ${f2(P1[1])}A${f2(r)} ${f2(r)} 0 0 ${sw} ${f2(P2[0])} ${f2(P2[1])}`;
+    }else d+=`${cmd}${f2(P[0])} ${f2(P[1])}`;
+  }
+  return d+'Z';
+}
+function panelGeom(p){
+  const s=S(),laser=s.machine==='laser',k=laser?Math.max(0,+s.kerf||0)/2:0,r=laser?0:Math.max(0,+s.bit||0)/2;
+  let pts=outline(p);if(k)pts=offsetPoly(pts,k);
+  const W=p.w+2*k,H=p.h+2*k;
+  pts=pts.map(([x,y])=>[x+k,H-(y+k)]);
+  let d=polyPath(pts,r),hasHandle=false;
+  const hw=Math.min(+s.handleW||110,p.w-4*s.t-40),hh=+s.handleH||32;
+  if(p.handle&&p.h>=hh+60&&hw>=60){
+    hasHandle=true;
+    const w2=hw-2*k,h2=hh-2*k,rr=h2/2,cx=W/2,cy=k+25+hh/2;
+    d+=`M${f2(cx-w2/2+rr)} ${f2(cy-rr)}H${f2(cx+w2/2-rr)}A${f2(rr)} ${f2(rr)} 0 0 1 ${f2(cx+w2/2-rr)} ${f2(cy+rr)}H${f2(cx-w2/2+rr)}A${f2(rr)} ${f2(rr)} 0 0 1 ${f2(cx-w2/2+rr)} ${f2(cy-rr)}Z`;
+  }
+  return{d,w:W,h:H,name:p.name,hasHandle};
+}
+function crateValid(c){const t=S().t;return c.L>=4*t+30&&c.W>=4*t+30&&c.H>=3*t+20}
+
+/* ---------- nesten ---------- */
+function sheetSize(){const s=S();return s.machine==='laser'?s.laserBed.map(Number):s.cncSheet.map(Number)}
+function nestAll(){
+  const s=S(),[SW,SH]=sheetSize(),m=5,gap=s.machine==='cnc'?Math.max(+s.gap||6,(+s.bit||6)+4):(+s.gap||6);
+  const parts=[];
+  state.crates.filter(c=>!excluded.has(c.id)&&crateValid(c)).forEach(c=>cratePanels(c).forEach(p=>{const g=panelGeom(p);parts.push({w:g.w,h:g.h,g,crate:c})}));
+  const fits=p=>(p.w<=SW-2*m&&p.h<=SH-2*m)||(p.h<=SW-2*m&&p.w<=SH-2*m);
+  const over=parts.filter(p=>!fits(p));let rest=parts.filter(fits);const sheets=[];
+  const filled=r=>r.placed.reduce((a,p)=>a+p.w*p.h,0);
+  while(rest.length&&sheets.length<60){const r1=packBin(rest,SW-2*m,SH-2*m,gap,false),r2=packBin(rest,SW-2*m,SH-2*m,gap,true);
+    const r=filled(r2)>filled(r1)?r2:r1;if(!r.placed.length)break;
+    sheets.push(r.placed.map(pl=>Object.assign(pl,{x:pl.x+m,y:pl.y+m})));rest=r.left}
+  return{sheets,over,SW,SH,parts};
+}
+function partSVG(pl,preview){
+  const p=pl.it,g=p.g,s=S();
+  const tr=pl.rot?`translate(${f2(pl.x+g.h)} ${f2(pl.y)}) rotate(90)`:`translate(${f2(pl.x)} ${f2(pl.y)})`;
+  const fs=Math.max(5,Math.min(10,g.h/5,g.w/14));
+  const ly=g.hasHandle?g.h*0.62:g.h/2;
+  const label=s.labels?`<text x="${f2(g.w/2)}" y="${f2(ly)}" font-size="${f2(fs)}" text-anchor="middle" dominant-baseline="middle" ${preview?'class="s-label"':'fill="#0000ff" font-family="Arial, sans-serif"'}>${esc(p.crate.name)} · ${esc(g.name)}</text>`:'';
+  const path=preview?`<path class="s-part" d="${g.d}"/>`:`<path d="${g.d}" fill="none" stroke="#ff0000" stroke-width="0.01"/>`;
+  return`<g transform="${tr}">${path}${label}</g>`;
+}
+function sheetFile(sheet,SW,SH){
+  return`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${SW}mm" height="${SH}mm" viewBox="0 0 ${SW} ${SH}">\n<!-- Kofferbakkratten · ${S().machine==='laser'?'laser, kerfcompensatie '+S().kerf+' mm':'CNC, dogbones Ø'+S().bit+' mm'} · plaat ${S().t} mm · rood = snijden, blauw = graveren -->\n${sheet.map(pl=>partSVG(pl,false)).join('\n')}\n</svg>\n`;
+}
+
+/* ---------- tekenen ---------- */
+function catColor(cat){const i=Math.max(0,CATS.indexOf(cat));return`var(--c${i})`}
+function renderChips(nest,trunkRes){
+  const nTools=state.tools.reduce((a,t)=>a+Math.max(1,Math.round(+t.qty||1)),0);
+  const unass=state.tools.filter(t=>!t.crate||!state.crates.some(c=>c.id===t.crate)).length;
+  const woodM2=state.crates.filter(crateValid).reduce((a,c)=>a+(2*c.L*c.H+2*c.W*c.H+c.L*c.W)/1e6,0);
+  const kg=woodM2*S().t/1000*DENSITY;
+  const tooTall=state.crates.filter(c=>+c.H>+S().trunk.h).length;
+  const fitTxt=!state.crates.length?'–':(trunkRes.left.length||tooTall)?'Nee':'Ja';
+  const fitCls=!state.crates.length?'':(trunkRes.left.length||tooTall)?'bad':'ok';
+  const fitSub=!state.crates.length?'nog geen kratten':trunkRes.left.length?`${trunkRes.left.length} krat(ten) passen niet`:tooTall?`${tooTall} krat(ten) te hoog`:`${fmt(trunkRes.usedPct)}% vloer bezet`;
+  const[SW,SH]=nest?[nest.SW,nest.SH]:sheetSize();
+  $('#chips').innerHTML=[
+    `<div class="chip"><b>${nTools}</b><span>stuks gereedschap</span></div>`,
+    `<div class="chip ${unass?'warn':''}"><b>${unass}</b><span>nog niet ingedeeld</span></div>`,
+    `<div class="chip"><b>${state.crates.length}</b><span>kratten</span></div>`,
+    `<div class="chip ${fitCls}"><b>${fitTxt}</b><span>past in kofferbak · ${fitSub}</span></div>`,
+    `<div class="chip"><b>${nest?nest.sheets.length:0}</b><span>platen ${SW} × ${SH} mm</span></div>`,
+    `<div class="chip"><b>${fmt(kg,1)}</b><span>kg hout · ${fmt(woodM2,2)} m²</span></div>`
+  ].join('');
+}
+function renderTrunk(){
+  const tr=S().trunk,W=+tr.w||1000,D=+tr.d||800;
+  const valid=state.crates.filter(c=>c.L>0&&c.W>0);
+  const res=packBin(valid.map(c=>({w:+c.L,h:+c.W,c})),W,D,5);
+  const used=res.placed.reduce((a,p)=>a+p.w*p.h,0);res.usedPct=used/(W*D)*100;
+  const pad=Math.max(W,D)*0.07,fs=Math.max(W,D)/42;
+  let g=`<svg viewBox="${-pad} ${-pad} ${W+2*pad} ${D+2*pad*1.6}" role="img" aria-label="Bovenaanzicht kofferbak met kratten">`;
+  g+=`<rect class="s-trunk" x="0" y="0" width="${W}" height="${D}" rx="${fs*0.4}"/>`;
+  g+=`<text class="s-sub" x="${W/2}" y="${-pad*0.35}" font-size="${fs*0.8}" text-anchor="middle">achterbank · ${fmt(W)} mm breed</text>`;
+  g+=`<line class="s-dim" x1="0" y1="${D+pad*0.45}" x2="${W}" y2="${D+pad*0.45}" stroke-width="${fs*0.12}"/>`;
+  g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP</text>`;
+  g+=`<text class="s-sub" x="${-pad*0.35}" y="${D/2}" font-size="${fs*0.8}" text-anchor="middle" transform="rotate(-90 ${-pad*0.35} ${D/2})">${fmt(D)} mm diep</text>`;
+  // plaats vanaf de achterklep: y omdraaien zodat kratten aan de klepkant staan
+  res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,tooTall=+c.H>+tr.h;
+    g+=`<rect class="s-crate ${tooTall?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
+    const f=Math.min(fs*1.1,p.w/7,p.h/3.2);
+    g+=`<text class="s-txt" x="${p.x+p.w/2}" y="${y+p.h/2-f*0.15}" font-size="${f}" text-anchor="middle">${esc(c.name)}</text>`;
+    g+=`<text class="s-sub" x="${p.x+p.w/2}" y="${y+p.h/2+f*0.95}" font-size="${f*0.68}" text-anchor="middle">${fmt(c.L)}×${fmt(c.W)}×${fmt(c.H)}${tooTall?' · te hoog':''}</text>`;
+  });
+  if(!valid.length)g+=`<text class="s-sub" x="${W/2}" y="${D/2}" font-size="${fs}" text-anchor="middle">Nog geen kratten. Voeg er een toe onder Kratten.</text>`;
+  g+='</svg>';
+  $('#trunkFig').innerHTML=g;
+  const notes=[];
+  if(valid.length){
+    notes.push(res.left.length?['bad',`Past niet: ${res.left.map(x=>esc(x.c.name)).join(', ')}.`]:['ok',`Alle kratten passen op de vloer (${fmt(res.usedPct)}% bezet).`]);
+    valid.filter(c=>+c.H>+tr.h).forEach(c=>notes.push(['bad',`${esc(c.name)} is ${fmt(c.H-tr.h)} mm te hoog.`]));
+    const free=W*D-used;if(!res.left.length)notes.push(['',`Vrije vloer: ${fmt(free/1e6,2)} m², handig voor een losse tas of kabelhaspel.`]);
+  }else notes.push(['','Voeg een krat toe om te zien hoe alles past.']);
+  $('#trunkNotes').innerHTML=notes.map(([c,t])=>`<li class="${c}">${t}</li>`).join('');
+  return res;
+}
+function crateVizHTML(c){
+  const s=S(),inn=crateInner(c),t=s.t,cl=s.clearance;
+  if(!crateValid(c))return`<div class="empty"><b>Maten te klein</b><p>Een krat moet minstens ${4*t+30} × ${4*t+30} × ${3*t+20} mm zijn.</p></div>`;
+  const items=toolItems(c.id),res=packTools(c,items);
+  const L=+c.L,W=+c.W,fs=Math.max(L,W)/38;
+  let g=`<svg viewBox="-4 -4 ${L+8} ${W+8}" role="img" aria-label="Bovenaanzicht van ${esc(c.name)}">`;
+  g+=`<rect class="s-wall" x="0" y="0" width="${L}" height="${W}" rx="2"/><rect class="s-inner" x="${t}" y="${t}" width="${inn.L}" height="${inn.W}"/>`;
+  res.placed.forEach(p=>{const it=p.it,x=t+cl/2+p.x,y=t+cl/2+p.y,tall=it.H>inn.H;
+    g+=`<rect class="s-tool" x="${x}" y="${y}" width="${p.w}" height="${p.h}" rx="3" style="fill:${catColor(it.tool.cat)};fill-opacity:.82"${tall?' stroke-dasharray="6 4"':''}/>`;
+    const f=Math.min(fs,p.w/Math.max(6,(it.tool.name||'').length*0.55),p.h/2.6);
+    if(f>=fs*0.45)g+=`<text class="s-txt" x="${x+p.w/2}" y="${y+p.h/2}" font-size="${f}" text-anchor="middle" dominant-baseline="middle">${esc(it.tool.name)}</text>`;
+  });
+  g+='</svg>';
+  const usedA=res.placed.reduce((a,p)=>a+p.w*p.h,0),pct=usedA/(inn.L*inn.W)*100;
+  const m2=(2*L*c.H+2*W*c.H+L*W)/1e6,kg=m2*t/1000*DENSITY;
+  const notes=[];
+  if(!items.length)notes.push(['','Nog geen gereedschap in deze krat. Kies hem in de kolom Krat.']);
+  if(res.left.length)notes.push(['bad',`Past niet: ${[...new Set(res.left.map(i=>esc(i.tool.name)))].join(', ')}. Maak de krat groter of klik op Maat op inhoud.`]);
+  const tall=[...new Set(items.filter(i=>i.H>inn.H).map(i=>i.tool))];
+  tall.forEach(tl=>notes.push(['warn',`${esc(tl.name)} steekt ${fmt(tl.h-inn.H)} mm boven de rand uit.`]));
+  if(items.length&&!res.left.length&&!tall.length)notes.push(['ok','Alles past, met '+cl+' mm speling rondom.']);
+  const cats=[...new Set(items.map(i=>i.tool.cat))];
+  return`<figure>${g}<figcaption>Bovenaanzicht binnenkant · ${fmt(inn.L)} × ${fmt(inn.W)} mm · ${fmt(pct)}% gevuld</figcaption>
+    ${cats.length?`<div class="legend">${cats.map(ct=>`<span><i style="background:${catColor(ct)}"></i>${esc(ct||'Overig')}</span>`).join('')}</div>`:''}</figure>
+    <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
+      <dl class="specs"><dt>Binnenmaat</dt><dd>${fmt(inn.L)} × ${fmt(inn.W)}</dd><dt>Hoogte binnen</dt><dd>${fmt(inn.H)} mm</dd>
+      <dt>Gereedschap</dt><dd>${items.length} st.</dd><dt>Hout</dt><dd>${fmt(m2,2)} m² · ${fmt(kg,1)} kg</dd>
+      <dt>Delen</dt><dd>5${c.handles?' · 2 grepen':''}</dd></dl>
+      <ul class="notes">${notes.map(([k,t])=>`<li class="${k}">${t}</li>`).join('')}</ul>
+    </div>`;
+}
+function renderCrates(){
+  const el=$('#crates');
+  if(!state.crates.length){
+    el.innerHTML=`<div class="card empty"><b>Nog geen kratten</b><p>Begin met één krat, of laad een voorbeeld om te zien hoe het werkt.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="primary" data-act="addcrate">+ Krat</button><button data-act="sample">Laad voorbeeld</button></div></div>`;
+    return;
+  }
+  el.innerHTML=state.crates.map(c=>`<article class="card" data-crate="${c.id}">
+    <div class="crate-head">
+      <input class="crate-name" type="text" id="cn-${c.id}" aria-label="Naam krat" value="${esc(c.name)}" data-s="crate" data-id="${c.id}" data-k="name">
+      <div class="field"><label for="cl-${c.id}">Lengte</label><input type="number" step="any" id="cl-${c.id}" value="${c.L}" data-s="crate" data-id="${c.id}" data-k="L"></div>
+      <div class="field"><label for="cw-${c.id}">Breedte</label><input type="number" step="any" id="cw-${c.id}" value="${c.W}" data-s="crate" data-id="${c.id}" data-k="W"></div>
+      <div class="field"><label for="ch-${c.id}">Hoogte</label><input type="number" step="any" id="ch-${c.id}" value="${c.H}" data-s="crate" data-id="${c.id}" data-k="H"></div>
+      <label style="align-self:center"><input type="checkbox" id="cg-${c.id}" ${c.handles?'checked':''} data-s="crate" data-id="${c.id}" data-k="handles"> handgrepen</label>
+      <span class="spacer"></span>
+      <button data-act="fit" data-id="${c.id}" title="Kleinste lengte en hoogte waarin het toegewezen gereedschap past, bij de huidige breedte">Maat op inhoud</button>
+      <button class="ghost" data-act="delcrate" data-id="${c.id}">Verwijder</button>
+    </div>
+    <div class="crate-body" id="cv-${c.id}"></div>
+  </article>`).join('');
+}
+function renderCrateViz(){state.crates.forEach(c=>{const el=document.getElementById('cv-'+c.id);if(el)el.innerHTML=crateVizHTML(c)})}
+function renderTools(){
+  const opts=c=>`<option value="">— geen —</option>`+state.crates.map(k=>`<option value="${k.id}" ${k.id===c?'selected':''}>${esc(k.name)}</option>`).join('');
+  const tb=$('#tools');
+  if(!state.tools.length){tb.innerHTML=`<tr><td colspan="8"><div class="empty"><b>Nog geen gereedschap</b><p>Meet de koffer of het apparaat op (grondvlak L × B en hoogte, in mm) en voeg het toe.</p></div></td></tr>`}
+  else tb.innerHTML=state.tools.map(t=>{const un=!t.crate||!state.crates.some(c=>c.id===t.crate);
+    return`<tr class="${un?'unassigned':''}" data-tool="${t.id}">
+    <td><input type="text" id="tn-${t.id}" aria-label="Naam" value="${esc(t.name)}" placeholder="bijv. Makita DHP485 in Makpac 2" data-s="tool" data-id="${t.id}" data-k="name"></td>
+    <td><span class="swatch" style="background:${catColor(t.cat)}"></span><select id="tc-${t.id}" aria-label="Soort" data-s="tool" data-id="${t.id}" data-k="cat">${CATS.map(c=>`<option ${c===t.cat?'selected':''}>${c}</option>`).join('')}</select></td>
+    <td style="text-align:right"><input type="number" step="any" id="tl-${t.id}" aria-label="Lengte" value="${t.l}" data-s="tool" data-id="${t.id}" data-k="l"></td>
+    <td style="text-align:right"><input type="number" step="any" id="tw-${t.id}" aria-label="Breedte" value="${t.w}" data-s="tool" data-id="${t.id}" data-k="w"></td>
+    <td style="text-align:right"><input type="number" step="any" id="th-${t.id}" aria-label="Hoogte" value="${t.h}" data-s="tool" data-id="${t.id}" data-k="h"></td>
+    <td style="text-align:right"><input type="number" step="1" min="1" id="tq-${t.id}" aria-label="Aantal" value="${t.qty||1}" data-s="tool" data-id="${t.id}" data-k="qty" style="width:56px"></td>
+    <td><select id="tk-${t.id}" aria-label="Krat" data-s="tool" data-id="${t.id}" data-k="crate">${opts(t.crate)}</select></td>
+    <td><button class="ghost" data-act="deltool" data-id="${t.id}" aria-label="Verwijder ${esc(t.name)}">×</button></td></tr>`}).join('');
+  const un=state.tools.filter(t=>!t.crate||!state.crates.some(c=>c.id===t.crate)).length;
+  $('#toolsFoot').textContent=state.tools.length?(un?`${un} item(s) nog niet in een krat (oranje streep).`:'Alles is ingedeeld.'):'';
+}
+function renderSheets(){
+  const s=S(),nest=nestAll(),[SW,SH]=[nest.SW,nest.SH];
+  $('#sheetIntro').textContent=s.machine==='laser'
+    ?`Lasersnijder, werkveld ${SW} × ${SH} mm. Rood = snijden (haarlijn), blauw = graveren. Kerf van ${s.kerf} mm is al gecompenseerd.`
+    :`CNC, plaat ${SW} × ${SH} mm. Contouren zijn de echte maat: frees ze buiten de lijn. Binnenhoeken hebben dogbones voor een frees van Ø${s.bit} mm.`;
+  $('#sheetCtl').innerHTML=state.crates.length?`<span class="hint">Meenemen:</span>`+state.crates.map(c=>`<label><input type="checkbox" id="ex-${c.id}" data-act="toggleex" data-id="${c.id}" ${excluded.has(c.id)?'':'checked'}> ${esc(c.name)}</label>`).join(''):'<span class="hint">Nog geen kratten.</span>';
+  let html='';
+  if(nest.over.length)html+=`<ul class="notes" style="padding:16px 16px 0"><li class="bad">Te groot voor ${SW} × ${SH} mm: ${nest.over.map(p=>esc(p.crate.name+' · '+p.g.name)+` (${fmt(p.w)}×${fmt(p.h)})`).join(', ')}. Maak de krat kleiner, kies CNC of pas de plaatmaat aan bij Instellingen.</li></ul>`;
+  if(!nest.sheets.length&&!nest.over.length){$('#sheets').innerHTML=`<div class="empty"><b>Geen onderdelen</b><p>Voeg een krat toe of vink er een aan.</p></div>`;return nest}
+  html+=`<div class="sheets">`+nest.sheets.map((sh,i)=>{
+    const area=sh.reduce((a,p)=>a+p.w*p.h,0)/(SW*SH)*100;
+    return`<div class="sheet"><svg viewBox="0 0 ${SW} ${SH}" role="img" aria-label="Plaat ${i+1}"><rect class="s-sheet" x="0" y="0" width="${SW}" height="${SH}" stroke-width="${SW/300}"/>${sh.map(pl=>partSVG(pl,true).replace('class="s-part"',`class="s-part" stroke-width="${f2(SW/500)}"`)).join('')}</svg>
+      <div class="sheet-foot"><span>Plaat ${i+1} · ${sh.length} delen · ${fmt(area)}% benut</span>
+      <span style="display:flex;gap:6px">${(dl||LOCAL)?`<button class="primary" data-act="dl" data-i="${i}">Download SVG</button>`:''}<button data-act="copy" data-i="${i}">Kopieer SVG</button></span></div></div>`}).join('')+`</div>`;
+  $('#sheets').innerHTML=html;
+  lastNest=nest;
+  return nest;
+}
+let lastNest=null;
+function renderSettings(){
+  const s=S(),laser=s.machine==='laser';
+  $('#settings').innerHTML=`
+  <div class="card"><h3>Machine</h3>
+    <div class="seg" role="group" aria-label="Machine"><button data-act="machine" data-v="laser" aria-pressed="${laser}">Trotec Speedy 360</button><button data-act="machine" data-v="cnc" aria-pressed="${!laser}">CNC</button></div>
+    ${laser?`<div class="dim-row"><div class="field"><label for="s-bw">Werkveld B</label><input type="number" step="any" id="s-bw" value="${s.laserBed[0]}" data-s="set" data-k="laserBed.0"></div>
+      <div class="field"><label for="s-bh">Werkveld H</label><input type="number" step="any" id="s-bh" value="${s.laserBed[1]}" data-s="set" data-k="laserBed.1"></div>
+      <div class="field"><label for="s-kerf">Kerf</label><input type="number" step="0.01" id="s-kerf" value="${s.kerf}" data-s="set" data-k="kerf"></div></div>
+      <p class="hint">Kerf = breedte van de snede. Groter maken geeft een strakkere passing; kleiner een lossere. Snij eerst een proefhoek.</p>
+      ${s.t>6?`<ul class="notes"><li class="warn">${s.t} mm multiplex is zwaar werk voor een CO₂-laser: lage snelheid, vaak 2 passes, en lijmlagen kunnen blijven hangen. De snijkant loopt iets schuin, dus test de passing. Een CNC is bij deze dikte meestal betrouwbaarder.</li></ul>`:''}`
+    :`<div class="dim-row"><div class="field"><label for="s-sw">Plaat B</label><input type="number" step="any" id="s-sw" value="${s.cncSheet[0]}" data-s="set" data-k="cncSheet.0"></div>
+      <div class="field"><label for="s-sh">Plaat H</label><input type="number" step="any" id="s-sh" value="${s.cncSheet[1]}" data-s="set" data-k="cncSheet.1"></div>
+      <div class="field"><label for="s-bit">Frees Ø</label><input type="number" step="any" id="s-bit" value="${s.bit}" data-s="set" data-k="bit"></div></div>
+      <p class="hint">Dogbones komen in elke binnenhoek, zodat de vingers ondanks de ronde frees helemaal insteken. Tussenruimte tussen delen is minimaal frees + 4 mm.</p>`}
+  </div>
+  <div class="card"><h3>Materiaal & verbinding</h3>
+    <div class="dim-row">
+      <div class="field"><label for="s-t">Plaatdikte</label><input type="number" step="0.05" id="s-t" value="${s.t}" data-s="set" data-k="t"></div>
+      <div class="field"><label for="s-f">Vingerbreedte</label><input type="number" step="any" id="s-f" value="${s.finger}" data-s="set" data-k="finger"></div>
+      <div class="field"><label for="s-gap">Ruimte tussen delen</label><input type="number" step="any" id="s-gap" value="${s.gap}" data-s="set" data-k="gap"></div>
+    </div>
+    <p class="hint">Vingerbreedte is een streefwaarde; elke rand krijgt een oneven aantal gelijke vingers. Rond 3× de plaatdikte is stevig.</p>
+    <label><input type="checkbox" id="s-lab" ${s.labels?'checked':''} data-s="set" data-k="labels"> Onderdeelnamen graveren (blauw)</label>
+  </div>
+  <div class="card"><h3>Inpakken</h3>
+    <div class="dim-row">
+      <div class="field"><label for="s-cl">Speling rond gereedschap</label><input type="number" step="any" id="s-cl" value="${s.clearance}" data-s="set" data-k="clearance"></div>
+      <div class="field"><label for="s-hw">Handgreep B</label><input type="number" step="any" id="s-hw" value="${s.handleW}" data-s="set" data-k="handleW"></div>
+      <div class="field"><label for="s-hh">Handgreep H</label><input type="number" step="any" id="s-hh" value="${s.handleH}" data-s="set" data-k="handleH"></div>
+    </div>
+    <p class="hint">Handgrepen komen in de korte zijkanten, 25 mm onder de rand. Een hand past goed in 110 × 32 mm.</p>
+  </div>
+  <div class="card"><h3>Gegevens</h3>
+    <p class="hint">${LOCAL?'Je gegevens staan alleen in deze browser. Maak af en toe een back-up, of zet het bestand naast deze pagina in GitHub.':'Bewaar een kopie of zet gegevens over naar een lokale versie.'}</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button data-act="export">Back-up opslaan (JSON)</button><button data-act="import">Back-up inladen</button></div>
+    <input type="file" id="importFile" accept=".json,application/json" hidden>
+  </div>`;
+}
+function syncTrunkInputs(){const t=S().trunk;['w','d','h'].forEach(k=>{const el=$('#tr-'+k);if(el&&document.activeElement!==el)el.value=t[k]})}
+let vizQueued=false;
+function renderViz(){if(vizQueued)return;vizQueued=true;requestAnimationFrame(()=>{vizQueued=false;
+  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr)})}
+function renderAll(){syncTrunkInputs();renderCrates();renderTools();renderSettings();renderViz()}
+
+/* ---------- interactie ---------- */
+function setPath(obj,path,v){const ks=path.split('.');let o=obj;for(let i=0;i<ks.length-1;i++)o=o[ks[i]];o[ks[ks.length-1]]=v}
+function readVal(el){if(el.type==='checkbox')return el.checked;if(el.type==='number'){const n=parseFloat(el.value);return isNaN(n)?0:n}return el.value}
+document.addEventListener('input',e=>{
+  const el=e.target;if(!el.dataset||!el.dataset.s)return;
+  const v=readVal(el),{s,id,k}=el.dataset;
+  if(s==='set')setPath(state.settings,k,v);
+  else if(s==='crate'){const c=state.crates.find(x=>x.id===id);if(c)c[k]=v}
+  else if(s==='tool'){const t=state.tools.find(x=>x.id===id);if(t)t[k]=v}
+  scheduleSave();renderViz();
+});
+document.addEventListener('change',e=>{
+  const el=e.target;if(!el.dataset)return;
+  if(el.dataset.act==='toggleex'){el.checked?excluded.delete(el.dataset.id):excluded.add(el.dataset.id);renderViz();return}
+  if(el.id==='importFile'&&el.files&&el.files[0]){
+    el.files[0].text().then(txt=>{const d=JSON.parse(txt);if(!d||!Array.isArray(d.tools))throw 0;
+      state=normalize(d);renderAll();scheduleSave();toast('Gegevens ingeladen.')}).catch(()=>toast('Dit bestand is geen geldige export van Kofferbakkratten.'));
+    el.value='';return;
+  }
+  const{s,k}=el.dataset;
+  if(s==='crate'&&k==='name')renderTools();
+  if(s==='tool'&&(k==='crate'||k==='cat'))renderTools();
+  if(s==='set'&&k==='t')renderSettings();
+});
+let toastT=null;
+function toast(msg){let el=$('.toast');if(!el){el=document.createElement('div');el.className='toast';el.setAttribute('role','status');document.body.appendChild(el)}
+  el.textContent=msg;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>{el.hidden=true},2600)}
+const armed={};
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-act]');if(!b)return;
+  const act=b.dataset.act,id=b.dataset.id;
+  if(act==='addcrate'){const n=state.crates.length;state.crates.push({id:uid(),name:'Krat '+String.fromCharCode(65+n%26),L:600,W:400,H:300,handles:true});renderAll();scheduleSave()}
+  else if(act==='delcrate'){
+    if(!armed[id]){armed[id]=true;b.textContent='Zeker weten?';b.classList.add('danger');setTimeout(()=>{armed[id]=false;if(b.isConnected){b.textContent='Verwijder';b.classList.remove('danger')}},3000);return}
+    state.crates=state.crates.filter(c=>c.id!==id);state.tools.forEach(t=>{if(t.crate===id)t.crate=''});excluded.delete(id);renderAll();scheduleSave();toast('Krat verwijderd; het gereedschap staat weer als niet ingedeeld.')}
+  else if(act==='fit'){const c=state.crates.find(x=>x.id===id);if(!c)return;
+    if(!toolItems(id).length){toast('Wijs eerst gereedschap toe aan deze krat.');return}
+    if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden onder 3 meter.')}
+  else if(act==='addtool'){const t={id:uid(),name:'',cat:CATS[0],l:0,w:0,h:0,qty:1,crate:state.crates.length===1?state.crates[0].id:''};state.tools.push(t);renderTools();renderViz();scheduleSave();
+    const el=document.getElementById('tn-'+t.id);if(el)el.focus()}
+  else if(act==='deltool'){state.tools=state.tools.filter(t=>t.id!==id);renderTools();renderViz();scheduleSave()}
+  else if(act==='machine'){S().machine=b.dataset.v;S().labels=b.dataset.v==='laser';renderSettings();renderViz();scheduleSave()}
+  else if(act==='sample'){loadSample()}
+  else if(act==='export'){try{await saveFile('kofferbakkratten-gegevens.json',JSON.stringify(state,null,2),'application/json');toast('Gegevens opgeslagen.')}catch(err){if(err&&err.code!=='declined')toast('Opslaan lukt hier niet.')}}
+  else if(act==='import'){$('#importFile').click()}
+  else if(act==='dl'||act==='copy'){
+    const nest=lastNest||nestAll(),i=+b.dataset.i,sh=nest.sheets[i];if(!sh)return;
+    const svg=sheetFile(sh,nest.SW,nest.SH),name=`kofferbakkratten-plaat-${i+1}-${S().machine}-${S().t}mm.svg`;
+    if(act==='dl'){try{await saveFile(name,svg,'image/svg+xml');toast('Opgeslagen: '+name)}catch(err){if(err&&err.code!=='declined')toast('Downloaden lukt hier niet; gebruik Kopieer SVG.')}}
+    else{try{await navigator.clipboard.writeText(svg);toast('SVG gekopieerd. Plak in een leeg .svg-bestand.')}catch(err){
+      const ta=document.createElement('textarea');ta.value=svg;ta.style.cssText='position:fixed;left:-9999px';document.body.appendChild(ta);ta.select();
+      try{document.execCommand('copy');toast('SVG gekopieerd.')}catch(e2){toast('Kopiëren werd geweigerd.')}ta.remove()}}
+  }
+});
+function loadSample(){
+  const a=uid(),b=uid();
+  state.crates.push({id:a,name:'Voorbeeld: accukrat',L:640,W:420,H:330,handles:true},{id:b,name:'Voorbeeld: zagen',L:720,W:420,H:330,handles:true});
+  [['Voorbeeld: boorschroefmachine in koffer','Accutol / boor',395,295,210,1,a],['Voorbeeld: slagschroevendraaier in koffer','Accutol / boor',395,295,210,1,a],
+   ['Voorbeeld: accu 5,0 Ah','Accu & lader',115,75,65,4,a],['Voorbeeld: snellader','Accu & lader',200,120,90,1,a],
+   ['Voorbeeld: invalcirkelzaag in systainer','Zaag',396,296,210,1,b],['Voorbeeld: decoupeerzaag in systainer','Zaag',396,296,157,1,b],
+   ['Voorbeeld: excenterschuurmachine','Schuurmachine',300,130,180,1,''],['Voorbeeld: bitset','Accessoires',160,110,40,2,'']]
+  .forEach(([name,cat,l,w,h,qty,crate])=>state.tools.push({id:uid(),name,cat,l,w,h,qty,crate}));
+  renderAll();scheduleSave();toast('Voorbeeld geladen. Pas de namen en maten aan naar je eigen gereedschap.');
+}
+
+renderAll();
+initStore();
+})();
+</script>
+
+</body>
+</html>

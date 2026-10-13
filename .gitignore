@@ -1,0 +1,4 @@
+snijbestanden/
+tests/uitvoer/
+*.FCBak
+__pycache__/
