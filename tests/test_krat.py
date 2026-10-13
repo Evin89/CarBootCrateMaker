@@ -2,6 +2,7 @@
 #   "C:Program FilesFreeCAD 1.1binreecadcmd.exe" tests	est_krat.py
 import json, os, sys, itertools
 import xml.dom.minidom
+import Part
 import FreeCAD as App
 HERE = os.path.dirname(os.path.abspath(sys.argv[-1] if sys.argv[-1].endswith(".py") else __file__))
 ROOT = os.path.dirname(HERE)
@@ -38,6 +39,51 @@ for (L, W, H, t, fw, hd) in [(600,400,300,9,30,False),(437,283,211,8.8,27,False)
     bb = fused.BoundBox
     check(abs(bb.XMin)<1e-6 and abs(bb.YMin)<1e-6 and abs(bb.ZMin)<1e-6 and abs(bb.XMax-L)<1e-6 and abs(bb.YMax-W)<1e-6 and abs(bb.ZMax-H)<1e-6,
           f"{L}x{W}x{H}: buitenmaat klopt ({bb.XLength:.2f} x {bb.YLength:.2f} x {bb.ZLength:.2f})")
+    App.closeDocument(doc.Name)
+
+# Vakken: dwarsschotten, tussenschotten en losse bakken
+def tool(i, name, cat, l, w, h, qty=1, group="", vak=""):
+    return {"id": "t%d" % i, "name": name, "cat": cat, "l": l, "w": w, "h": h, "qty": qty, "crate": "k", "group": group, "vak": vak}
+TOOLS = [tool(1, "Boormachine", "Accutol / boor", 240, 100, 230), tool(2, "Decoupeerzaag", "Zaag", 290, 80, 210),
+         tool(3, "Schuurmachine", "Schuurmachine", 150, 130, 180), tool(4, "Multitool", "Zaag", 280, 75, 90),
+         tool(5, "Hamer", "Handgereedschap", 330, 40, 30, vak="schot"), tool(6, "Accu", "Accu & lader", 115, 75, 65, 4, "Accu's"),
+         tool(7, "Lader", "Accu & lader", 200, 120, 90, 1, "Accu's"), tool(8, "Bitset", "Accessoires", 160, 110, 40, 2)]
+for (L, W, H, t, hd) in [(900, 450, 300, 9, False), (760, 520, 280, 12, False), (900, 450, 300, 9, True)]:
+    s = json.loads(json.dumps(ns["DEFAULTS"])); s["t"] = t
+    c = {"name": "V", "id": "k", "L": L, "W": W, "H": H, "handles": hd}
+    doc = App.newDocument("V")
+    part, panels, rep = ns["build_crate"](doc, c, s, tools=TOOLS)
+    doc.recompute()
+    lay = ns["crate_layout"](c, s, TOOLS)
+    check(not lay["left"], f"vakken {L}x{W}x{H} t={t}: alles past ({len(lay['comps'])} vakken, {len(lay['cross'])} dwars, {len(lay['subs'])} tussen); {rep}")
+    check(len(lay["cross"]) >= 1 and len(lay["subs"]) >= 1, f"vakken {L}x{W}x{H}: zowel dwars- als tussenschotten")
+    objs = [o for o in part.Group if o.Name.startswith(("Paneel", "Bak"))]
+    sh = []
+    for o in objs:
+        c2 = o.Shape.copy(); c2.Placement = o.getGlobalPlacement(); sh.append((o.Label, c2))
+    check(all(x.isValid() and len(x.Solids) == 1 for _, x in sh), f"vakken {L}x{W}x{H}: {len(sh)} geldige massieve delen")
+    worst = (0.0, "")
+    for (na, a), (nb, b) in itertools.combinations(sh, 2):
+        if a.BoundBox.intersect(b.BoundBox):
+            v = a.common(b).Volume
+            if v > worst[0]: worst = (v, na + " / " + nb)
+    check(worst[0] < 1e-3, f"vakken {L}x{W}x{H}: geen overlap tussen alle delen (max {worst[0]:.4f} mm3 {worst[1]})")
+    crate_sh = [x for n, x in sh if " bak " not in n]
+    Hd = lay["Hd"]; bodies = sum((W - 2 * t) * Hd * t for _ in lay["cross"]) + sum((sd["xe"] - sd["xs"]) * Hd * t for sd in lay["subs"])
+    shell = L * W * H - (L - 2 * t) * (W - 2 * t) * (H - t)
+    tot = sum(x.Volume for x in crate_sh)
+    if not hd:
+        check(abs(tot - shell - bodies) < 0.05, f"vakken {L}x{W}x{H}: lipjes vullen de sleuven exact ({tot:.1f} vs {shell + bodies:.1f} mm3)")
+    bb = crate_sh[0].fuse(crate_sh[1:]).BoundBox
+    check(abs(bb.XLength - L) < 1e-6 and abs(bb.YLength - W) < 1e-6 and abs(bb.ZLength - H) < 1e-6, f"vakken {L}x{W}x{H}: niets steekt buiten de krat")
+    bins = [x for n, x in sh if " bak " in n]
+    inner = Part.makeBox(L - 2 * t, W - 2 * t, H, App.Vector(t, t, t))
+    check(bins and all(abs(x.common(inner).Volume - x.Volume) < 1e-3 for x in bins), f"vakken {L}x{W}x{H}: {len(bins)} bak-panelen staan binnen de krat")
+    for machine in ("laser", "cnc"):
+        s["machine"] = machine
+        files, over = ns["write_svgs"]([("V", panels)], s, os.path.join(OUT, "svg-vakken-" + machine))
+        for f in files: xml.dom.minidom.parse(f)
+        check(files and not over and any("-6mm-" in f for f in files), f"vakken {machine}: {len(files)} SVG's, ook voor 6 mm bakken")
     App.closeDocument(doc.Name)
 
 # SVG laser en CNC

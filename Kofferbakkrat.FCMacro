@@ -5,15 +5,16 @@
 # vingerverbindingen als 3D-onderdelen, en schrijft optioneel SVG-snijbestanden
 # voor een lasersnijder (kerfcompensatie) of CNC (dogbones in binnenhoeken).
 # Kan ook een back-up (JSON) van de Kofferbakkratten-webpagina inladen: dan
-# worden alle kratten, het gereedschap en de kofferbak in 3D opgebouwd.
+# worden alle kratten met hun vakken, schotten, losse bakken en gereedschap
+# in de kofferbak opgebouwd.
 #
 # Gebruik: Macro > Macro's... > Kofferbakkrat > Uitvoeren.
 # Selecteer eerst een bestaande krat om die aan te passen.
 
 __Title__ = "Kofferbakkrat"
 __Author__ = "Evin Wijninga"
-__Version__ = "0.1"
-__Comment__ = "Multiplex kratten met vingerverbindingen, 3D en SVG-snijbestanden voor laser of CNC"
+__Version__ = "0.2"
+__Comment__ = "Multiplex kratten met vingerverbindingen, schotten en losse bakken; 3D en SVG-snijbestanden voor laser of CNC"
 
 import json
 import math
@@ -25,16 +26,20 @@ from FreeCAD import Vector
 
 CATS = ["Accutol / boor", "Zaag", "Schuurmachine", "Accu & lader",
         "Accessoires", "Handgereedschap", "Overig"]
+BAK_CATS = ["Accu & lader", "Accessoires", "Handgereedschap"]
 CAT_COLORS = [(0.79, 0.56, 0.29), (0.31, 0.53, 0.72), (0.48, 0.62, 0.30),
               (0.72, 0.38, 0.35), (0.54, 0.44, 0.69), (0.30, 0.61, 0.59),
               (0.55, 0.56, 0.53)]
 PLY = (0.90, 0.80, 0.62)
+PLY_DARK = (0.70, 0.54, 0.31)
 DENSITY = 680.0  # kg/m³ berken multiplex
+BIN_GAP = 3.0    # speling rond losse bakken
 
 DEFAULTS = {
     "t": 9.0, "finger": 30.0, "machine": "laser", "kerf": 0.2, "bit": 6.0,
     "clearance": 10.0, "gap": 6.0, "labels": True,
     "handleW": 110.0, "handleH": 32.0,
+    "binT": 6.0, "binFinger": 20.0, "dividerH": 0.0,
     "laserBed": [813.0, 508.0], "cncSheet": [2440.0, 1220.0],
     "trunk": {"w": 1000.0, "d": 850.0, "h": 450.0},
 }
@@ -42,7 +47,242 @@ PARAM_PATH = "User parameter:BaseApp/Preferences/Macros/Kofferbakkrat"
 
 
 # ---------------------------------------------------------------------------
-# Geometrie (zelfde rekenwijze als de webpagina)
+# Inpakken (plankjes-methode) — zelfde rekenwijze als de webpagina
+# ---------------------------------------------------------------------------
+
+def pack_bin(items, W, H, gap, portrait=False):
+    """items: dicts met w, h. Geeft (geplaatst, over). Geplaatst: x, y, w, h, rot, it."""
+    lst = []
+    for it in items:
+        w, h, rot = it["w"], it["h"], False
+        if (h > w) != portrait and h != w:
+            w, h, rot = h, w, True
+        if w > W and h <= W and w <= H:
+            w, h, rot = h, w, not rot
+        lst.append({"it": it, "w": w, "h": h, "rot": rot})
+    lst.sort(key=lambda q: (-q["h"], -q["w"]))
+    shelves, placed, left, y, e = [], [], [], 0.0, 1e-6
+    for p in lst:
+        done = False
+        for s in shelves:
+            if s["x"] + p["w"] <= W + e and p["h"] <= s["h"] + e:
+                placed.append({"x": s["x"], "y": s["y"], "w": p["w"], "h": p["h"], "rot": p["rot"], "it": p["it"]})
+                s["x"] += p["w"] + gap
+                done = True
+                break
+            if s["x"] + p["h"] <= W + e and p["w"] <= s["h"] + e:
+                placed.append({"x": s["x"], "y": s["y"], "w": p["h"], "h": p["w"], "rot": not p["rot"], "it": p["it"]})
+                s["x"] += p["h"] + gap
+                done = True
+                break
+        if done:
+            continue
+        if p["w"] <= W + e and y + p["h"] <= H + e:
+            shelves.append({"y": y, "h": p["h"], "x": p["w"] + gap})
+            placed.append({"x": 0.0, "y": y, "w": p["w"], "h": p["h"], "rot": p["rot"], "it": p["it"]})
+            y += p["h"] + gap
+        elif p["h"] <= W + e and y + p["w"] <= H + e:
+            shelves.append({"y": y, "h": p["w"], "x": p["h"] + gap})
+            placed.append({"x": 0.0, "y": y, "w": p["h"], "h": p["w"], "rot": not p["rot"], "it": p["it"]})
+            y += p["w"] + gap
+        else:
+            left.append(p["it"])
+    return placed, left
+
+
+def min_rect(items, gap, max_w):
+    """Compacte rechthoek (w hoogstens max_w) waarin de items passen, of None."""
+    if not items:
+        return None
+    wmin = max(min(i["w"], i["h"]) for i in items)
+    if wmin > max_w + 1e-6:
+        return None
+    wmax = max(wmin, min(max_w, sum(max(i["w"], i["h"]) for i in items) + gap * (len(items) - 1)))
+    step = max(2.0, (wmax - wmin) / 120.0)
+    best, W = None, wmin
+    while W <= wmax + step - 1e-9:
+        placed, left = pack_bin(items, min(W, wmax), 1e7, gap)
+        W += step
+        if left:
+            continue
+        w = max(p["x"] + p["w"] for p in placed)
+        h = max(p["y"] + p["h"] for p in placed)
+        # kleinste oppervlakte, maar lange smalle stroken tellen zwaarder
+        a = w * h * (1 + 0.25 * (max(w, h) / min(w, h) - 1))
+        if best is None or a < best["a"] - 1e-6:
+            best = {"w": w, "h": h, "a": a}
+    return best
+
+
+def fill_rect(items, X0, Y0, SX, SY, m, gap):
+    """Items in een rechthoek (X langs de kratlengte, Y langs de breedte); beide richtingen proberen."""
+    pa, la = pack_bin(items, SY - 2 * m, SX - 2 * m, gap)
+    to_a = [{"X": X0 + m + p["y"], "Y": Y0 + m + p["x"], "SX": p["h"], "SY": p["w"], "it": p["it"]} for p in pa]
+    if not la:
+        return to_a, []
+    pb, lb = pack_bin(items, SX - 2 * m, SY - 2 * m, gap)
+    if len(lb) < len(la):
+        return [{"X": X0 + m + p["x"], "Y": Y0 + m + p["y"], "SX": p["w"], "SY": p["h"], "it": p["it"]} for p in pb], lb
+    return to_a, la
+
+
+def pack_sheets(parts, SW, SH, gap, margin=5.0):
+    def fits(p):
+        return ((p["w"] <= SW - 2 * margin and p["h"] <= SH - 2 * margin) or
+                (p["h"] <= SW - 2 * margin and p["w"] <= SH - 2 * margin))
+    over = [p for p in parts if not fits(p)]
+    rest = [p for p in parts if fits(p)]
+    sheets = []
+    while rest and len(sheets) < 60:
+        tries = [pack_bin(rest, SW - 2 * margin, SH - 2 * margin, gap, pt) for pt in (False, True)]
+        placed, rest = max(tries, key=lambda r: sum(p["w"] * p["h"] for p in r[0]))
+        if not placed:
+            break
+        for pl in placed:
+            pl["x"] += margin
+            pl["y"] += margin
+        sheets.append(placed)
+    return sheets, over
+
+
+def sheet_size(s):
+    return tuple(float(v) for v in (s["laserBed"] if s["machine"] == "laser" else s["cncSheet"]))
+
+
+def sheet_gap(s):
+    if s["machine"] == "cnc":
+        return max(float(s["gap"]), float(s["bit"]) + 4)
+    return float(s["gap"])
+
+
+# ---------------------------------------------------------------------------
+# Indeling met vakken, schotten en losse bakken
+# ---------------------------------------------------------------------------
+
+def vak_of(tool):
+    return tool.get("vak") or ("bak" if tool.get("cat") in BAK_CATS else "schot")
+
+
+def layout_on(c):
+    return c.get("layout") != "vrij"
+
+
+def tool_items(tools):
+    out = []
+    for tl in tools:
+        for _ in range(max(1, int(round(float(tl.get("qty") or 1))))):
+            if float(tl.get("l") or 0) > 0 and float(tl.get("w") or 0) > 0:
+                out.append({"w": float(tl["l"]), "h": float(tl["w"]), "H": float(tl.get("h") or 0), "tool": tl})
+    return out
+
+
+def build_comps(c, s, tools):
+    t, cl, bt = float(s["t"]), float(s["clearance"]), float(s["binT"])
+    Wi, Hi = float(c["W"]) - 2 * t, float(c["H"]) - t
+    groups = {}
+    order = []
+    for tl in tools:
+        g0 = (tl.get("group") or "").strip()
+        key = "g:" + g0.lower() if g0 else "t:" + str(tl.get("id"))
+        if key not in groups:
+            groups[key] = {"label": g0 or tl.get("name") or "Gereedschap", "mode": vak_of(tl), "tools": []}
+            order.append(key)
+        groups[key]["tools"].append(tl)
+    comps, notes, bins = [], [], []
+    for key in order:
+        g = groups[key]
+        items = tool_items(g["tools"])
+        if not items:
+            continue
+        hmax = max(i["H"] for i in items)
+        if g["mode"] == "bak":
+            r = min_rect(items, cl, Wi - 2 * BIN_GAP - 2 * bt - cl)
+            if not r:
+                notes.append("%s is te groot voor een losse bak in deze krat." % g["label"])
+                continue
+            b = {"label": g["label"], "items": items,
+                 "w": max(math.ceil(r["w"] + cl + 2 * bt), 4 * bt + 30),
+                 "h": max(math.ceil(r["h"] + cl + 2 * bt), 4 * bt + 30),
+                 "H": max(3 * bt + 20, math.ceil((hmax + bt + 5) / 5.0) * 5)}
+            if b["H"] > Hi:
+                notes.append("Bak %s (%d mm) is hoger dan de krat van binnen." % (g["label"], b["H"]))
+            bins.append(b)
+        else:
+            r = min_rect(items, cl, Wi - cl)
+            if not r:
+                notes.append("%s is te breed voor deze krat." % g["label"])
+                continue
+            if hmax > Hi:
+                notes.append("%s steekt %d mm boven de rand uit." % (g["label"], hmax - Hi))
+            comps.append({"kind": "schot", "label": g["label"], "items": items,
+                          "w": r["w"] + cl, "h": r["h"] + cl, "Hmax": hmax})
+    if bins:
+        r = min_rect([{"w": b["w"], "h": b["h"], "bin": b} for b in bins], BIN_GAP, Wi - 2 * BIN_GAP)
+        if r:
+            comps.append({"kind": "bak", "label": "Bakken", "bins": bins,
+                          "w": r["w"] + 2 * BIN_GAP, "h": r["h"] + 2 * BIN_GAP, "Hmax": max(b["H"] for b in bins)})
+        else:
+            notes.append("De losse bakken passen niet in de breedte van deze krat.")
+    return comps, notes
+
+
+def arrange(c, s, comps):
+    """Vakken in stroken: dwarsschotten tussen stroken, tussenschotten binnen een strook."""
+    t = float(s["t"])
+    L, W = float(c["L"]), float(c["W"])
+    Li, Wi = L - 2 * t, W - 2 * t
+    items = [{"w": cp["w"], "h": cp["h"], "cp": cp} for cp in comps]
+
+    def length(r):
+        return max([p["y"] + p["h"] for p in r[0]] or [0])
+    tries = [pack_bin(items, Wi, Li, t, pt) for pt in (False, True)]
+    placed, left = sorted(tries, key=lambda r: (len(r[1]), length(r)))[0]
+    ys = sorted(set(p["y"] for p in placed))
+    cross, subs = [], []
+    for i, y in enumerate(ys):
+        its = sorted([p for p in placed if p["y"] == y], key=lambda p: p["x"])
+        last = i == len(ys) - 1
+        x0 = t + y
+        x1 = L - t if last else t + y + max(p["h"] for p in its)
+        if not last:
+            cross.append({"x": x1})
+        for k, p in enumerate(its[:-1]):
+            subs.append({"y": t + p["x"] + p["w"], "xs": x0, "xe": x1, "bay": i,
+                         "start": "L" if i == 0 else "cross", "end": "R" if last else "cross"})
+    out = []
+    for p in placed:
+        cp = dict(p["it"]["cp"])
+        cp.update({"X": t + p["y"], "Y": t + p["x"], "SX": p["h"], "SY": p["w"]})
+        out.append(cp)
+    return {"cross": cross, "subs": subs, "comps": out, "left": [i["cp"] for i in left]}
+
+
+def crate_layout(c, s, tools):
+    t, cl, bt = float(s["t"]), float(s["clearance"]), float(s["binT"])
+    Hi = float(c["H"]) - t
+    comps, notes = build_comps(c, s, tools)
+    lay = arrange(c, s, comps)
+    lay["Hd"] = min(float(s["dividerH"]), Hi) if float(s.get("dividerH") or 0) > 0 else Hi
+    lay["notes"] = notes
+    for cp in lay["comps"]:
+        if cp["kind"] == "schot":
+            cp["tools"], _ = fill_rect(cp["items"], cp["X"], cp["Y"], cp["SX"], cp["SY"], cl / 2, cl)
+        else:
+            placed, _ = fill_rect([{"w": b["w"], "h": b["h"], "bin": b} for b in cp["bins"]],
+                                  cp["X"], cp["Y"], cp["SX"], cp["SY"], BIN_GAP, BIN_GAP)
+            cp["bins_placed"] = []
+            for r in placed:
+                b = r["it"]["bin"]
+                o = {"label": b["label"], "X": r["X"], "Y": r["Y"], "L": r["SX"], "W": r["SY"], "H": b["H"]}
+                o["tools"], _ = fill_rect(b["items"], r["X"] + bt, r["Y"] + bt, r["SX"] - 2 * bt, r["SY"] - 2 * bt, cl / 2, cl)
+                cp["bins_placed"].append(o)
+    if lay["left"]:
+        notes.insert(0, "Past niet in %s: %s" % (c["name"], ", ".join(cp["label"] for cp in lay["left"])))
+    return lay
+
+
+# ---------------------------------------------------------------------------
+# Panelen: vingerverbindingen, schotten met lipjes, sleuven
 # ---------------------------------------------------------------------------
 
 def segs(length, pre, pre_d, post, post_d, ev, od, fw):
@@ -64,21 +304,126 @@ def segs(length, pre, pre_d, post, post_d, ev, od, fw):
     return out
 
 
-def crate_panels(L, W, H, t, fw, handles):
-    """De 5 panelen. Randen in volgorde onder, rechts, boven, links (oplopend gemeten)."""
+def box_panels(L, W, H, t, fw, handles):
+    """De 5 panelen van een open doos. Randen: onder, rechts, boven, links (oplopend gemeten)."""
     v_front = segs(H, t, 0, 0, 0, 0, t, fw)
     v_side = segs(H, t, t, 0, 0, t, 0, fw)
     bx = segs(L, t, t, t, t, 0, t, fw)
     by = segs(W, t, t, t, t, 0, t, fw)
-    front_edges = [segs(L, t, 0, t, 0, t, 0, fw), v_front, [[0, L, 0]], v_front]
-    side_edges = [segs(W, t, t, t, t, t, 0, fw), v_side, [[0, W, 0]], v_side]
+    fe = [segs(L, t, 0, t, 0, t, 0, fw), v_front, [[0, L, 0]], v_front]
+    se = [segs(W, t, t, t, t, t, 0, fw), v_side, [[0, W, 0]], v_side]
     return [
-        {"name": "voorkant", "kind": "front", "w": L, "h": H, "edges": front_edges, "handle": False},
-        {"name": "achterkant", "kind": "back", "w": L, "h": H, "edges": front_edges, "handle": False},
-        {"name": "zijkant L", "kind": "left", "w": W, "h": H, "edges": side_edges, "handle": handles},
-        {"name": "zijkant R", "kind": "right", "w": W, "h": H, "edges": side_edges, "handle": handles},
-        {"name": "bodem", "kind": "bottom", "w": L, "h": W, "edges": [bx, by, bx, by], "handle": False},
+        {"name": "voorkant", "kind": "front", "w": L, "h": H, "edges": fe, "handle": False, "t": t, "holes": []},
+        {"name": "achterkant", "kind": "back", "w": L, "h": H, "edges": fe, "handle": False, "t": t, "holes": []},
+        {"name": "zijkant L", "kind": "left", "w": W, "h": H, "edges": se, "handle": handles, "t": t, "holes": []},
+        {"name": "zijkant R", "kind": "right", "w": W, "h": H, "edges": se, "handle": handles, "t": t, "holes": []},
+        {"name": "bodem", "kind": "bottom", "w": L, "h": W, "edges": [bx, by, bx, by], "handle": False, "t": t, "holes": []},
     ]
+
+
+def tabbed_rect(length, Hd, t, bottom, right, left):
+    """Schot: lijf length x Hd, lipjes van t naar onder en aan de uiteinden; verschoven zodat alles >= 0."""
+    p = [(0.0, 0.0)]
+    for a, b in bottom:
+        p += [(a, 0), (a, -t), (b, -t), (b, 0)]
+    p.append((length, 0))
+    for a, b in right:
+        p += [(length, a), (length + t, a), (length + t, b), (length, b)]
+    p += [(length, Hd), (0, Hd)]
+    for a, b in reversed(left):
+        p += [(0, b), (-t, b), (-t, a), (0, a)]
+    return _clean([(x + t, y + t) for x, y in p])
+
+
+def handle_box(p, s):
+    """Handgreep (cx, cy, breedte, hoogte) in paneelcoördinaten (y omhoog), of None."""
+    hw = min(float(s["handleW"]), p["w"] - 4 * float(s["t"]) - 40)
+    hh = float(s["handleH"])
+    if not p.get("handle") or p["h"] < hh + 60 or hw < 60:
+        return None
+    return (p["w"] / 2.0, p["h"] - 25 - hh / 2.0, hw, hh)
+
+
+def divider_panels(c, s, lay):
+    t = float(s["t"])
+    Wi, Hd = float(c["W"]) - 2 * t, lay["Hd"]
+    bands = [(0.3, 0.7)] if Hd < 80 else [(0.2, 0.4), (0.6, 0.8)]
+    wall_bands = [(a * Hd, b * Hd) for a, b in bands]
+    A, B = (0.55 * Hd, 0.8 * Hd), (0.2 * Hd, 0.45 * Hd)
+
+    def btabs(ln):
+        n = 1 if ln < 120 else (2 if ln < 400 else 3)
+        tl = min(50.0, ln / (2 * n + 1))
+        return [(ln * (k + 1) / (n + 1) - tl / 2, ln * (k + 1) / (n + 1) + tl / 2) for k in range(n)]
+
+    hb = handle_box({"w": float(c["W"]), "h": float(c["H"]), "handle": bool(c.get("handles"))}, s)
+
+    def hits(y, band):
+        if not hb:
+            return False
+        cx, cy, hw, hh = hb
+        return (y + t > cx - hw / 2 - 5 and y < cx + hw / 2 + 5 and
+                t + band[1] > cy - hh / 2 - 5 and t + band[0] < cy + hh / 2 + 5)
+
+    holes = {"front": [], "back": [], "left": [], "right": [], "bottom": []}
+    panels = []
+    for i, cd in enumerate(lay["cross"]):
+        bt = btabs(Wi)
+        p = {"name": "dwarsschot %d" % (i + 1), "kind": "cross", "w": Wi + 2 * t, "h": Hd + t, "t": t,
+             "pts": tabbed_rect(Wi, Hd, t, bt, wall_bands, wall_bands), "holes": [], "x": cd["x"]}
+        cd["panel"] = p
+        panels.append(p)
+        for a, b in wall_bands:
+            holes["front"].append((cd["x"], t + a, cd["x"] + t, t + b))
+            holes["back"].append((cd["x"], t + a, cd["x"] + t, t + b))
+        for a, b in bt:
+            holes["bottom"].append((cd["x"], t + a, cd["x"] + t, t + b))
+    for j, sd in enumerate(lay["subs"]):
+        ln = sd["xe"] - sd["xs"]
+        bt = btabs(ln)
+
+        def pick(order, wall):
+            for b in order:
+                if wall != "cross" and hits(sd["y"], b):
+                    continue
+                return b
+            return None
+        st, en = pick([A, B], sd["start"]), pick([B, A], sd["end"])
+        p = {"name": "tussenschot %d" % (j + 1), "kind": "sub", "w": ln + 2 * t, "h": Hd + t, "t": t,
+             "pts": tabbed_rect(ln, Hd, t, bt, [en] if en else [], [st] if st else []), "holes": [],
+             "xs": sd["xs"], "y": sd["y"]}
+        panels.append(p)
+        for a, b in bt:
+            holes["bottom"].append((sd["xs"] + a, sd["y"], sd["xs"] + b, sd["y"] + t))
+        if st:
+            h = (sd["y"], t + st[0], sd["y"] + t, t + st[1])
+            (holes["left"] if sd["start"] == "L" else lay["cross"][sd["bay"] - 1]["panel"]["holes"]).append(h)
+        if en:
+            h = (sd["y"], t + en[0], sd["y"] + t, t + en[1])
+            (holes["right"] if sd["end"] == "R" else lay["cross"][sd["bay"]]["panel"]["holes"]).append(h)
+    return panels, holes
+
+
+def crate_parts(c, s, tools=None):
+    """Alle panelen van een krat. Geeft (krat-panelen incl. schotten, bak-panelen per bak, indeling of None)."""
+    t = float(s["t"])
+    panels = box_panels(float(c["L"]), float(c["W"]), float(c["H"]), t, float(s["finger"]), bool(c.get("handles")))
+    if not tools or not layout_on(c):
+        return panels, [], None
+    lay = crate_layout(c, s, tools)
+    dv, holes = divider_panels(c, s, lay)
+    for p in panels:
+        p["holes"] = holes.get(p["kind"], [])
+    panels += dv
+    bins = []
+    bt = float(s["binT"])
+    for cp in lay["comps"]:
+        for b in cp.get("bins_placed", []):
+            bp = box_panels(b["L"], b["W"], b["H"], bt, float(s["binFinger"]), False)
+            for p in bp:
+                p["name"] = "bak %s · %s" % (b["label"], p["name"])
+            bins.append((b, bp))
+    return panels, bins, lay
 
 
 def _clean(pts):
@@ -105,6 +450,8 @@ def _clean(pts):
 
 def outline(p):
     """Contour van een paneel (y omhoog, tegen de klok in)."""
+    if p.get("pts"):
+        return p["pts"]
     w, h, edges = p["w"], p["h"], p["edges"]
 
     def rev(sg, ln):
@@ -158,89 +505,6 @@ def offset_poly(pts, k):
     return res
 
 
-def handle_box(p, s):
-    """Handgreep (cx, cy, breedte, hoogte) in paneelcoördinaten (y omhoog), of None."""
-    hw = min(float(s["handleW"]), p["w"] - 4 * s["t"] - 40)
-    hh = float(s["handleH"])
-    if not p["handle"] or p["h"] < hh + 60 or hw < 60:
-        return None
-    return (p["w"] / 2.0, p["h"] - 25 - hh / 2.0, hw, hh)
-
-
-# ---------------------------------------------------------------------------
-# Inpakken (plankjes-methode)
-# ---------------------------------------------------------------------------
-
-def pack_bin(items, W, H, gap, portrait=False):
-    """items: dicts met w, h. Geeft (geplaatst, over). Geplaatst: x, y, w, h, rot, it."""
-    lst = []
-    for it in items:
-        w, h, rot = it["w"], it["h"], False
-        if (h > w) != portrait and h != w:
-            w, h, rot = h, w, True
-        if w > W and h <= W and w <= H:
-            w, h, rot = h, w, not rot
-        lst.append({"it": it, "w": w, "h": h, "rot": rot})
-    lst.sort(key=lambda q: (-q["h"], -q["w"]))
-    shelves, placed, left, y, e = [], [], [], 0.0, 1e-6
-    for p in lst:
-        done = False
-        for s in shelves:
-            if s["x"] + p["w"] <= W + e and p["h"] <= s["h"] + e:
-                placed.append({"x": s["x"], "y": s["y"], "w": p["w"], "h": p["h"], "rot": p["rot"], "it": p["it"]})
-                s["x"] += p["w"] + gap
-                done = True
-                break
-            if s["x"] + p["h"] <= W + e and p["w"] <= s["h"] + e:
-                placed.append({"x": s["x"], "y": s["y"], "w": p["h"], "h": p["w"], "rot": not p["rot"], "it": p["it"]})
-                s["x"] += p["h"] + gap
-                done = True
-                break
-        if done:
-            continue
-        if p["w"] <= W + e and y + p["h"] <= H + e:
-            shelves.append({"y": y, "h": p["h"], "x": p["w"] + gap})
-            placed.append({"x": 0.0, "y": y, "w": p["w"], "h": p["h"], "rot": p["rot"], "it": p["it"]})
-            y += p["h"] + gap
-        elif p["h"] <= W + e and y + p["w"] <= H + e:
-            shelves.append({"y": y, "h": p["w"], "x": p["h"] + gap})
-            placed.append({"x": 0.0, "y": y, "w": p["h"], "h": p["w"], "rot": not p["rot"], "it": p["it"]})
-            y += p["w"] + gap
-        else:
-            left.append(p["it"])
-    return placed, left
-
-
-def pack_sheets(parts, SW, SH, gap, margin=5.0):
-    def fits(p):
-        return ((p["w"] <= SW - 2 * margin and p["h"] <= SH - 2 * margin) or
-                (p["h"] <= SW - 2 * margin and p["w"] <= SH - 2 * margin))
-    over = [p for p in parts if not fits(p)]
-    rest = [p for p in parts if fits(p)]
-    sheets = []
-    while rest and len(sheets) < 60:
-        # Liggend en staand proberen; de variant die de meeste plaat vult wint.
-        tries = [pack_bin(rest, SW - 2 * margin, SH - 2 * margin, gap, pt) for pt in (False, True)]
-        placed, rest = max(tries, key=lambda r: sum(p["w"] * p["h"] for p in r[0]))
-        if not placed:
-            break
-        for pl in placed:
-            pl["x"] += margin
-            pl["y"] += margin
-        sheets.append(placed)
-    return sheets, over
-
-
-def sheet_size(s):
-    return tuple(float(v) for v in (s["laserBed"] if s["machine"] == "laser" else s["cncSheet"]))
-
-
-def sheet_gap(s):
-    if s["machine"] == "cnc":
-        return max(float(s["gap"]), float(s["bit"]) + 4)
-    return float(s["gap"])
-
-
 # ---------------------------------------------------------------------------
 # SVG-snijbestanden
 # ---------------------------------------------------------------------------
@@ -270,6 +534,16 @@ def _svg_path(pts, r):
     return "".join(d) + "Z"
 
 
+def _rrect(x0, y0, x1, y1, r):
+    r = min(r, (x1 - x0) / 2, (y1 - y0) / 2)
+    if r <= 0:
+        return "M%s %sH%sV%sH%sZ" % (_f(x0), _f(y0), _f(x1), _f(y1), _f(x0))
+    a = "A%s %s 0 0 1 " % (_f(r), _f(r))
+    return ("M%s %sH%s%s%s %sV%s%s%s %sH%s%s%s %sV%s%s%s %sZ" % (
+        _f(x0 + r), _f(y0), _f(x1 - r), a, _f(x1), _f(y0 + r), _f(y1 - r), a, _f(x1 - r), _f(y1),
+        _f(x0 + r), a, _f(x0), _f(y1 - r), _f(y0 + r), a, _f(x0 + r), _f(y0)))
+
+
 def panel_cut_geom(p, s):
     """Snijcontour voor één paneel, in SVG-coördinaten (y omlaag)."""
     laser = s["machine"] == "laser"
@@ -279,14 +553,24 @@ def panel_cut_geom(p, s):
     if k:
         pts = offset_poly(pts, k)
     W, H = p["w"] + 2 * k, p["h"] + 2 * k
-    pts = [(x + k, H - (y + k)) for x, y in pts]
-    d = _svg_path(pts, r)
+
+    def Y(y):
+        return H - (y + k)
+    d = _svg_path([(x + k, Y(y)) for x, y in pts], r)
+    for u0, v0, u1, v1 in p.get("holes", []):
+        # laser: gat krimpt met halve kerf; CNC: gat verlengd met de freesstraal zodat het lipje tot in de hoeken past
+        if laser:
+            d += _rrect(u0 + 2 * k, Y(v1 - k), u1, Y(v0 + k), 0)
+        elif u1 - u0 < v1 - v0:
+            d += _rrect(u0, Y(v1 + r), u1, Y(v0 - r), r)
+        else:
+            d += _rrect(u0 - r, Y(v1), u1 + r, Y(v0), r)
     hb = handle_box(p, s)
     if hb:
         cx, cy_up, hw, hh = hb
         w2, h2 = hw - 2 * k, hh - 2 * k
         rr = h2 / 2
-        cx, cy = cx + k, H - (cy_up + k)
+        cx, cy = cx + k, Y(cy_up)
         d += ("M%s %sH%sA%s %s 0 0 1 %s %sH%sA%s %s 0 0 1 %s %sZ" % (
             _f(cx - w2 / 2 + rr), _f(cy - rr), _f(cx + w2 / 2 - rr), _f(rr), _f(rr),
             _f(cx + w2 / 2 - rr), _f(cy + rr), _f(cx - w2 / 2 + rr), _f(rr), _f(rr),
@@ -299,43 +583,45 @@ def _xml(s):
 
 
 def write_svgs(crates, s, folder):
-    """crates: lijst van (naam, panelen). Schrijft plaat-N.svg en geeft de paden terug."""
+    """crates: lijst van (naam, panelen). Schrijft per plaatdikte plaat-N.svg en geeft (paden, te groot) terug."""
     SW, SH = sheet_size(s)
     parts = []
     for name, panels in crates:
         for p in panels:
             g = panel_cut_geom(p, s)
-            parts.append({"w": g["w"], "h": g["h"], "g": g, "crate": name})
-    sheets, over = pack_sheets(parts, SW, SH, sheet_gap(s))
+            parts.append({"w": g["w"], "h": g["h"], "g": g, "crate": name, "t": float(p["t"])})
     if not os.path.isdir(folder):
         os.makedirs(folder)
-    files = []
+    files, over_all = [], []
     mode = ("laser, kerfcompensatie %s mm" % s["kerf"]) if s["machine"] == "laser" else ("CNC, dogbones %s mm" % s["bit"])
-    for i, sheet in enumerate(sheets):
-        body = []
-        for pl in sheet:
-            g = pl["it"]["g"]
-            if pl["rot"]:
-                tr = "translate(%s %s) rotate(90)" % (_f(pl["x"] + g["h"]), _f(pl["y"]))
-            else:
-                tr = "translate(%s %s)" % (_f(pl["x"]), _f(pl["y"]))
-            label = ""
-            if s["labels"]:
-                fs = max(5.0, min(10.0, g["h"] / 5, g["w"] / 14))
-                ly = g["h"] * 0.62 if g["handle"] else g["h"] / 2
-                label = ('<text x="%s" y="%s" font-size="%s" text-anchor="middle" dominant-baseline="middle" '
-                         'fill="#0000ff" font-family="Arial, sans-serif">%s · %s</text>' % (
-                             _f(g["w"] / 2), _f(ly), _f(fs), _xml(pl["it"]["crate"]), _xml(g["name"])))
-            body.append('<g transform="%s"><path d="%s" fill="none" stroke="#ff0000" stroke-width="0.01"/>%s</g>' % (tr, g["d"], label))
-        svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
-               '<svg xmlns="http://www.w3.org/2000/svg" width="%smm" height="%smm" viewBox="0 0 %s %s">\n'
-               '<!-- Kofferbakkrat · %s · plaat %s mm · rood = snijden, blauw = graveren -->\n%s\n</svg>\n' % (
-                   _f(SW), _f(SH), _f(SW), _f(SH), mode, _f(float(s["t"])), "\n".join(body)))
-        path = os.path.join(folder, "kofferbakkrat-plaat-%d-%s-%smm.svg" % (i + 1, s["machine"], _f(float(s["t"]))))
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(svg)
-        files.append(path)
-    return files, over
+    for t in sorted(set(p["t"] for p in parts), reverse=True):
+        sheets, over = pack_sheets([p for p in parts if p["t"] == t], SW, SH, sheet_gap(s))
+        over_all += over
+        for i, sheet in enumerate(sheets):
+            body = []
+            for pl in sheet:
+                g = pl["it"]["g"]
+                if pl["rot"]:
+                    tr = "translate(%s %s) rotate(90)" % (_f(pl["x"] + g["h"]), _f(pl["y"]))
+                else:
+                    tr = "translate(%s %s)" % (_f(pl["x"]), _f(pl["y"]))
+                label = ""
+                if s["labels"]:
+                    fs = max(4.0, min(10.0, g["h"] / 5, g["w"] / 16))
+                    ly = g["h"] * 0.62 if g["handle"] else g["h"] / 2
+                    label = ('<text x="%s" y="%s" font-size="%s" text-anchor="middle" dominant-baseline="middle" '
+                             'fill="#0000ff" font-family="Arial, sans-serif">%s · %s</text>' % (
+                                 _f(g["w"] / 2), _f(ly), _f(fs), _xml(pl["it"]["crate"]), _xml(g["name"])))
+                body.append('<g transform="%s"><path d="%s" fill="none" stroke="#ff0000" stroke-width="0.01"/>%s</g>' % (tr, g["d"], label))
+            svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                   '<svg xmlns="http://www.w3.org/2000/svg" width="%smm" height="%smm" viewBox="0 0 %s %s">\n'
+                   '<!-- Kofferbakkrat · %s · plaat %s mm · rood = snijden, blauw = graveren -->\n%s\n</svg>\n' % (
+                       _f(SW), _f(SH), _f(SW), _f(SH), mode, _f(t), "\n".join(body)))
+            path = os.path.join(folder, "kofferbakkrat-%smm-plaat-%d-%s.svg" % (_f(t), i + 1, s["machine"]))
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(svg)
+            files.append(path)
+    return files, over_all
 
 
 # ---------------------------------------------------------------------------
@@ -344,25 +630,28 @@ def write_svgs(crates, s, folder):
 
 def panel_solid(p, s):
     """Paneel plat in XY, dikte in +Z (nominale maat, zonder kerf of dogbones)."""
-    t = float(s["t"])
+    t = float(p["t"])
     pts = [Vector(x, y, 0) for x, y in outline(p)]
-    face = Part.Face(Part.makePolygon(pts + [pts[0]]))
-    solid = face.extrude(Vector(0, 0, t))
+    solid = Part.Face(Part.makePolygon(pts + [pts[0]])).extrude(Vector(0, 0, t))
+    cuts = [Part.makeBox(u1 - u0, v1 - v0, t + 2, Vector(u0, v0, -1)) for u0, v0, u1, v1 in p.get("holes", [])]
     hb = handle_box(p, s)
     if hb:
         cx, cy, hw, hh = hb
         rr = hh / 2.0
-        slot = Part.makeBox(hw - hh, hh, t + 2, Vector(cx - hw / 2 + rr, cy - rr, -1))
-        slot = slot.fuse([Part.makeCylinder(rr, t + 2, Vector(cx - hw / 2 + rr, cy, -1)),
-                          Part.makeCylinder(rr, t + 2, Vector(cx + hw / 2 - rr, cy, -1))])
-        solid = solid.cut(slot)
+        cuts += [Part.makeBox(hw - hh, hh, t + 2, Vector(cx - hw / 2 + rr, cy - rr, -1)),
+                 Part.makeCylinder(rr, t + 2, Vector(cx - hw / 2 + rr, cy, -1)),
+                 Part.makeCylinder(rr, t + 2, Vector(cx + hw / 2 - rr, cy, -1))]
+    if cuts:
+        solid = solid.cut(cuts[0].fuse(cuts[1:]) if len(cuts) > 1 else cuts[0])
     return solid.removeSplitter()
 
 
-def assembled_placement(kind, L, W, t):
+def assembled_placement(p, L, W):
     """Waar een plat paneel in de dichte krat komt (krat van (0,0,0) tot (L,W,H))."""
-    rx = App.Rotation(Vector(1, 0, 0), 90)            # (u,v,w) -> (u,-w,v)
+    t = float(p["t"])
+    rx = App.Rotation(Vector(1, 0, 0), 90)                # (u,v,w) -> (u,-w,v)
     rzx = App.Rotation(Vector(0, 0, 1), 90).multiply(rx)  # (u,v,w) -> (w,u,v)
+    kind = p["kind"]
     if kind == "front":
         return App.Placement(Vector(0, t, 0), rx)
     if kind == "back":
@@ -371,6 +660,10 @@ def assembled_placement(kind, L, W, t):
         return App.Placement(Vector(0, 0, 0), rzx)
     if kind == "right":
         return App.Placement(Vector(L - t, 0, 0), rzx)
+    if kind == "cross":
+        return App.Placement(Vector(p["x"], 0, 0), rzx)
+    if kind == "sub":
+        return App.Placement(Vector(p["xs"] - t, p["y"] + t, 0), rx)
     return App.Placement()
 
 
@@ -393,71 +686,91 @@ def _add_props(part, c, s):
         setattr(part, prop, val)
 
 
+def _add_tool_box(doc, part, r, z):
+    tl = r["it"]["tool"]
+    box = doc.addObject("Part::Feature", "Gereedschap")
+    box.Label = tl.get("name") or "Gereedschap"
+    box.Shape = Part.makeBox(r["SX"], r["SY"], max(r["it"]["H"], 1), Vector(r["X"], r["Y"], z))
+    idx = CATS.index(tl.get("cat")) if tl.get("cat") in CATS else len(CATS) - 1
+    _style(box, CAT_COLORS[idx], 40)
+    part.addObject(box)
+
+
 def build_crate(doc, c, s, tools=None, flat=False):
-    """Bouw één krat als App::Part. c: {name, L, W, H, handles}. Geeft (part, panelen)."""
+    """Bouw één krat als App::Part. Geeft (part, alle panelen, meldingen)."""
     L, W, H, t = float(c["L"]), float(c["W"]), float(c["H"]), float(s["t"])
     if L < 4 * t + 30 or W < 4 * t + 30 or H < 3 * t + 20:
         raise ValueError("%s is te klein: minimaal %d x %d x %d mm." % (c["name"], 4 * t + 30, 4 * t + 30, 3 * t + 20))
-    panels = crate_panels(L, W, H, t, float(s["finger"]), bool(c.get("handles")))
+    panels, bins, lay = crate_parts(c, s, tools)
+    all_panels = panels + [p for _, bp in bins for p in bp]
     part = doc.addObject("App::Part", "Krat")
     part.Label = c["name"]
     _add_props(part, c, s)
-    report = {"over": [], "tall": []}
+    notes = list(lay["notes"]) if lay else []
 
     if flat:
         SW, SH = sheet_size(s)
-        items = [{"w": p["w"], "h": p["h"], "p": p} for p in panels]
-        sheets, over = pack_sheets(items, SW, SH, sheet_gap(s))
-        report["over"] = [i["p"]["name"] for i in over]
-        for si, sheet in enumerate(sheets):
-            ox = si * (SW + 100)
-            frame = doc.addObject("Part::Feature", "Plaat")
-            frame.Label = "%s plaat %d (%d x %d)" % (c["name"], si + 1, SW, SH)
-            frame.Shape = Part.makePolygon([Vector(ox, 0, 0), Vector(ox + SW, 0, 0), Vector(ox + SW, SH, 0),
-                                            Vector(ox, SH, 0), Vector(ox, 0, 0)])
-            part.addObject(frame)
-            for pl in sheet:
-                p = pl["it"]["p"]
-                obj = doc.addObject("Part::Feature", "Paneel")
-                obj.Label = "%s %s" % (c["name"], p["name"])
-                obj.Shape = panel_solid(p, s)
-                if pl["rot"]:
-                    obj.Placement = App.Placement(Vector(ox + pl["x"] + p["h"], pl["y"], 0), App.Rotation(Vector(0, 0, 1), 90))
-                else:
-                    obj.Placement = App.Placement(Vector(ox + pl["x"], pl["y"], 0), App.Rotation())
-                _style(obj, PLY)
-                part.addObject(obj)
-        return part, panels, report
+        thicknesses = sorted(set(float(p["t"]) for p in all_panels), reverse=True)
+        oy = 0.0
+        for th in thicknesses:
+            items = [{"w": p["w"], "h": p["h"], "p": p} for p in all_panels if float(p["t"]) == th]
+            sheets, over = pack_sheets(items, SW, SH, sheet_gap(s))
+            notes += ["Te groot voor de plaat: %s %s" % (c["name"], i["p"]["name"]) for i in over]
+            for si, sheet in enumerate(sheets):
+                ox = si * (SW + 100)
+                frame = doc.addObject("Part::Feature", "Plaat")
+                frame.Label = "%s %s mm plaat %d" % (c["name"], _f(th), si + 1)
+                frame.Shape = Part.makePolygon([Vector(ox, oy, 0), Vector(ox + SW, oy, 0), Vector(ox + SW, oy + SH, 0),
+                                                Vector(ox, oy + SH, 0), Vector(ox, oy, 0)])
+                part.addObject(frame)
+                for pl in sheet:
+                    p = pl["it"]["p"]
+                    obj = doc.addObject("Part::Feature", "Paneel")
+                    obj.Label = "%s %s" % (c["name"], p["name"])
+                    obj.Shape = panel_solid(p, s)
+                    if pl["rot"]:
+                        obj.Placement = App.Placement(Vector(ox + pl["x"] + p["h"], oy + pl["y"], 0), App.Rotation(Vector(0, 0, 1), 90))
+                    else:
+                        obj.Placement = App.Placement(Vector(ox + pl["x"], oy + pl["y"], 0), App.Rotation())
+                    _style(obj, PLY if p["kind"] not in ("cross", "sub") else PLY_DARK)
+                    part.addObject(obj)
+            oy += SH + 200
+        return part, all_panels, notes
 
     for p in panels:
         obj = doc.addObject("Part::Feature", "Paneel")
         obj.Label = "%s %s" % (c["name"], p["name"])
         obj.Shape = panel_solid(p, s)
-        obj.Placement = assembled_placement(p["kind"], L, W, t)
-        _style(obj, PLY)
+        obj.Placement = assembled_placement(p, L, W)
+        _style(obj, PLY if p["kind"] not in ("cross", "sub") else PLY_DARK)
         part.addObject(obj)
+    bt = float(s["binT"])
+    for b, bp in bins:
+        base = App.Placement(Vector(b["X"], b["Y"], t), App.Rotation())
+        for p in bp:
+            obj = doc.addObject("Part::Feature", "Bak")
+            obj.Label = "%s %s" % (c["name"], p["name"])
+            obj.Shape = panel_solid(p, s)
+            obj.Placement = base.multiply(assembled_placement(p, b["L"], b["W"]))
+            _style(obj, PLY)
+            part.addObject(obj)
+        for r in b["tools"]:
+            _add_tool_box(doc, part, r, t + bt)
 
-    if tools:
+    if tools and lay:
+        for cp in lay["comps"]:
+            for r in cp.get("tools", []):
+                _add_tool_box(doc, part, r, t)
+    elif tools:
         cl = float(s["clearance"])
-        items = []
-        for tl in tools:
-            for _ in range(max(1, int(round(float(tl.get("qty") or 1))))):
-                if float(tl.get("l") or 0) > 0 and float(tl.get("w") or 0) > 0:
-                    items.append({"w": float(tl["l"]), "h": float(tl["w"]), "tool": tl})
-        placed, left = pack_bin(items, L - 2 * t - cl, W - 2 * t - cl, cl)
-        report["over"] = sorted(set(i["tool"]["name"] for i in left))
+        placed, left = pack_bin(tool_items(tools), L - 2 * t - cl, W - 2 * t - cl, cl)
+        notes += ["Past niet in %s: %s" % (c["name"], n) for n in sorted(set(i["tool"]["name"] for i in left))]
         for pl in placed:
-            tl = pl["it"]["tool"]
-            th = float(tl.get("h") or 0)
-            if th > H - t:
-                report["tall"].append(tl["name"])
-            box = doc.addObject("Part::Feature", "Gereedschap")
-            box.Label = tl.get("name") or "Gereedschap"
-            box.Shape = Part.makeBox(pl["w"], pl["h"], max(th, 1), Vector(t + cl / 2 + pl["x"], t + cl / 2 + pl["y"], t))
-            idx = CATS.index(tl.get("cat")) if tl.get("cat") in CATS else len(CATS) - 1
-            _style(box, CAT_COLORS[idx], 40)
-            part.addObject(box)
-    return part, panels, report
+            r = {"X": t + cl / 2 + pl["y"], "Y": t + cl / 2 + pl["x"], "SX": pl["h"], "SY": pl["w"], "it": pl["it"]}
+            if r["it"]["H"] > H - t:
+                notes.append("%s steekt boven de rand van %s uit." % (r["it"]["tool"]["name"], c["name"]))
+            _add_tool_box(doc, part, r, t)
+    return part, all_panels, notes
 
 
 def build_from_backup(doc, data, s, flat=False):
@@ -465,7 +778,7 @@ def build_from_backup(doc, data, s, flat=False):
     tr = s["trunk"]
     TW, TD, TH = float(tr["w"]), float(tr["d"]), float(tr["h"])
     crates = [c for c in data.get("crates", []) if float(c.get("L") or 0) > 0 and float(c.get("W") or 0) > 0]
-    built, notes = [], []
+    built, notes, positions = [], [], {}
     if not flat:
         trunk = doc.addObject("Part::Feature", "Kofferbak")
         trunk.Shape = Part.Compound(Part.makeBox(TW, TD, TH).Edges)
@@ -474,23 +787,22 @@ def build_from_backup(doc, data, s, flat=False):
         placed, left = pack_bin([{"w": float(c["L"]), "h": float(c["W"]), "c": c} for c in crates], TW, TD, 5)
         notes += ["Past niet in de kofferbak: %s" % c["c"]["name"] for c in left]
         positions = {id(p["it"]["c"]): p for p in placed}
-    offset_x = 0.0
+    offset = 0.0
     for c in crates:
         tools = [t for t in data.get("tools", []) if t.get("crate") == c.get("id")]
         try:
-            part, panels, rep = build_crate(doc, c, s, tools=None if flat else tools, flat=flat)
+            part, panels, rep = build_crate(doc, c, s, tools=tools, flat=flat)
         except ValueError as e:
             notes.append(str(e))
             continue
         built.append((c["name"], panels))
-        notes += ["%s: past niet in de krat: %s" % (c["name"], n) for n in rep["over"] if not flat]
-        notes += ["%s: %s steekt boven de rand uit" % (c["name"], n) for n in sorted(set(rep["tall"]))]
+        notes += rep
         if float(c["H"]) > TH:
             notes.append("%s is %d mm te hoog voor de kofferbak" % (c["name"], float(c["H"]) - TH))
         if flat:
-            part.Placement = App.Placement(Vector(0, offset_x, 0), App.Rotation())
-            SW, SH = sheet_size(s)
-            offset_x += SH + 200
+            part.Placement = App.Placement(Vector(0, offset, 0), App.Rotation())
+            n_t = len(set(float(p["t"]) for p in panels))
+            offset += n_t * (sheet_size(s)[1] + 200) + 200
         else:
             p = positions.get(id(c))
             if p:
@@ -504,9 +816,10 @@ def build_from_backup(doc, data, s, flat=False):
     return built, notes
 
 
-def wood_summary(panels, t):
+def wood_summary(panels):
     m2 = sum(p["w"] * p["h"] for p in panels) / 1e6
-    return m2, m2 * t / 1000.0 * DENSITY
+    kg = sum(p["w"] * p["h"] / 1e6 * float(p["t"]) / 1000.0 * DENSITY for p in panels)
+    return m2, kg
 
 
 # ---------------------------------------------------------------------------
@@ -594,6 +907,7 @@ def run_gui():
     e_handles.setChecked(bool(crate["handles"]))
     for lbl, w in (("Naam", e_name), ("Lengte", e_L), ("Breedte", e_W), ("Hoogte", e_H), ("", e_handles)):
         f1.addRow(lbl, w)
+    f1.addRow("", QtGui.QLabel("Vakken, schotten en losse bakken komen uit een back-up van de webpagina."))
     lay.addWidget(g1)
 
     # Materiaal en machine
@@ -601,6 +915,7 @@ def run_gui():
     f2 = QtGui.QFormLayout(g2)
     e_t = num(s["t"], 1, 50, 2)
     e_finger = num(s["finger"], 5, 500)
+    e_bt = num(s["binT"], 1, 50, 2)
     e_machine = QtGui.QComboBox()
     e_machine.addItems(["Lasersnijder (Trotec Speedy 360)", "CNC-frees"])
     e_machine.setCurrentIndex(0 if s["machine"] == "laser" else 1)
@@ -610,8 +925,8 @@ def run_gui():
     e_sh = num(sheet_size(s)[1], 50, 5000, 0)
     e_labels = QtGui.QCheckBox("Onderdeelnamen graveren (blauw)")
     e_labels.setChecked(bool(s["labels"]))
-    for lbl, w in (("Plaatdikte", e_t), ("Vingerbreedte", e_finger), ("Machine", e_machine),
-                   ("Kerf (laser)", e_kerf), ("Frees Ø (CNC)", e_bit),
+    for lbl, w in (("Plaatdikte", e_t), ("Vingerbreedte", e_finger), ("Dikte losse bakken", e_bt),
+                   ("Machine", e_machine), ("Kerf (laser)", e_kerf), ("Frees Ø (CNC)", e_bit),
                    ("Plaat / werkveld breed", e_sw), ("Plaat / werkveld hoog", e_sh), ("", e_labels)):
         f2.addRow(lbl, w)
     lay.addWidget(g2)
@@ -662,7 +977,8 @@ def run_gui():
     def read_settings():
         laser = e_machine.currentIndex() == 0
         s2 = json.loads(json.dumps(s))
-        s2.update({"t": e_t.value(), "finger": e_finger.value(), "machine": "laser" if laser else "cnc",
+        s2.update({"t": e_t.value(), "finger": e_finger.value(), "binT": e_bt.value(),
+                   "machine": "laser" if laser else "cnc",
                    "kerf": e_kerf.value(), "bit": e_bit.value(), "labels": e_labels.isChecked()})
         s2["laserBed" if laser else "cncSheet"] = [e_sw.value(), e_sh.value()]
         return s2
@@ -675,8 +991,10 @@ def run_gui():
             msg.append("%d SVG-bestand(en) opgeslagen in:\n%s" % (len(files), e_dir.text()))
             if over:
                 msg.append("Te groot voor de plaat: " + ", ".join("%s %s" % (p["crate"], p["g"]["name"]) for p in over))
-        m2 = sum(wood_summary(p, s2["t"])[0] for _, p in built)
-        kg = sum(wood_summary(p, s2["t"])[1] for _, p in built)
+        if s2["machine"] == "cnc" and float(s2["bit"]) > min(float(s2["t"]), float(s2["binT"])):
+            msg.append("Let op: de frees is breder dan de dunste plaat, dus de sleuven kunnen niet gefreesd worden.")
+        m2 = sum(wood_summary(p)[0] for _, p in built)
+        kg = sum(wood_summary(p)[1] for _, p in built)
         msg.append("Hout: %.2f m², ongeveer %.1f kg." % (m2, kg))
         msg += notes
         App.ParamGet(PARAM_PATH).SetString("dir", e_dir.text())
@@ -701,7 +1019,7 @@ def run_gui():
                 for o in list(replace.Group):
                     doc.removeObject(o.Name)
                 doc.removeObject(replace.Name)
-            part, panels, rep = build_crate(doc, c, s2, flat=e_view.currentIndex() == 1)
+            part, panels, notes = build_crate(doc, c, s2, flat=e_view.currentIndex() == 1)
             if place is not None:
                 part.Placement = place
         except ValueError as e:
@@ -710,7 +1028,7 @@ def run_gui():
             return
         doc.commitTransaction()
         store_settings(s2, c)
-        finish([(c["name"], panels)], s2, [], doc)
+        finish([(c["name"], panels)], s2, notes, doc)
 
     def on_json():
         path, _ = QtGui.QFileDialog.getOpenFileName(dlg, "Back-up van Kofferbakkratten", os.path.dirname(e_dir.text()),
