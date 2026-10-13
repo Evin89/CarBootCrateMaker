@@ -206,6 +206,13 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
         <button data-act="v3fit">Beeld passend maken</button>
         <button data-act="autopos">Automatisch schikken</button>
       </div>
+      <div class="sheet-ctl" id="v3-edit" hidden>
+        <button data-act="v3cross">+ Dwarsschot</button>
+        <button data-act="v3sub">+ Tussenschot</button>
+        <button data-act="v3del" id="v3-del" disabled>Verwijder schot</button>
+        <button data-act="autolayout">Automatisch indelen</button>
+        <span class="hint">Sleep gereedschap, bakken en schotten. Dubbelklik draait gereedschap of een bak. Klik een schot aan en druk op Delete om het te verwijderen.</span>
+      </div>
       <div id="view3d" style="min-height:300px;touch-action:none"></div>
     </div>
   </section>
@@ -442,24 +449,95 @@ function arrange(c,built){
 }
 const layoutCache=new Map();
 function crateLayout(c){
-  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,c.shape,s,crateTools(c)]);
+  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,c.shape,c.manual||null,s,crateTools(c)]);
   if(layoutCache.has(key))return layoutCache.get(key);
-  const t=+s.t,cl=+s.clearance,bt=+s.binT||6,Hi=c.H-t;
-  const built=buildComps(c),ar=arrange(c,built);
-  ar.Hd=(+s.dividerH>0)?Math.min(+s.dividerH,Hi):Hi;
-  ar.notes=built.notes.slice();
-  ar.comps.forEach(cp=>{
-    if(cp.kind==='schot'){const f=fillRect(cp.items,cp.X,cp.Y,cp.SX,cp.SY,cl/2,cl);cp.tools=f.placed}
-    else{
-      const f=fillRect(cp.bins.map(b=>({w:b.w,h:b.h,bin:b})),cp.X,cp.Y,cp.SX,cp.SY,BIN_GAP,BIN_GAP);
-      cp.binsPlaced=f.placed.map(r=>{const b=r.it.bin,o={label:b.label,X:r.X,Y:r.Y,L:r.SX,W:r.SY,H:b.H};
-        o.tools=fillRect(b.items,r.X+bt,r.Y+bt,r.SX-2*bt,r.SY-2*bt,cl/2,cl).placed;return o});
-    }
-  });
-  if(ar.left.length)ar.notes.unshift(['bad',`Past niet: ${ar.left.map(cp=>esc(cp.label)).join(', ')}. Maak de krat groter of klik op Maat op inhoud.`]);
+  const ar=c.manual?manualLayout(c):autoLayout(c);
   if(layoutCache.size>200)layoutCache.clear();
   layoutCache.set(key,ar);
   return ar;
+}
+function binKey(label){return'b:'+String(label).toLowerCase()}
+function autoLayout(c){
+  const s=S(),t=+s.t,cl=+s.clearance,bt=+s.binT||6,Hi=c.H-t;
+  const built=buildComps(c),ar=arrange(c,built);
+  ar.Hd=(+s.dividerH>0)?Math.min(+s.dividerH,Hi):Hi;
+  ar.notes=built.notes.slice();
+  ar.tools=[];ar.bins=[];
+  const cnt={};
+  ar.comps.forEach(cp=>{
+    if(cp.kind==='schot'){
+      cp.tools=fillRect(cp.items,cp.X,cp.Y,cp.SX,cp.SY,cl/2,cl).placed;
+      cp.tools.forEach(r=>{const id=r.it.tool.id,n=cnt[id]=(cnt[id]||0)+1;r.key=`t:${id}:${n}`;r.rot=Math.abs(r.SX-r.it.w)>0.01;ar.tools.push(r)});
+    }else{
+      const f=fillRect(cp.bins.map(b=>({w:b.w,h:b.h,bin:b})),cp.X,cp.Y,cp.SX,cp.SY,BIN_GAP,BIN_GAP);
+      cp.binsPlaced=f.placed.map(r=>{const b=r.it.bin,o={key:binKey(b.label),label:b.label,X:r.X,Y:r.Y,L:r.SX,W:r.SY,H:b.H,rot:Math.abs(r.SX-b.w)>0.01};
+        o.tools=fillRect(b.items,r.X+bt,r.Y+bt,r.SX-2*bt,r.SY-2*bt,cl/2,cl).placed;ar.bins.push(o);return o});
+    }
+  });
+  if(ar.left.length)ar.notes.unshift(['bad',`Past niet: ${ar.left.map(cp=>esc(cp.label)).join(', ')}. Maak de krat groter of klik op Maat op inhoud.`]);
+  return ar;
+}
+function baysOf(c,cross){const t=+S().t,xs=cross.map(d=>d.x);return xs.concat([c.L-t]).map((x1,i)=>({x0:i?xs[i-1]+t:t,x1}))}
+/* Handmatige indeling: eigen schotten, en gereedschap en bakken op een vaste plek. Ontbrekende onderdelen krijgen een vrije plek. */
+function manualLayout(c){
+  const s=S(),t=+s.t,cl=+s.clearance,bt=+s.binT||6,L=+c.L,W=+c.W,Hi=c.H-t,m=c.manual;
+  const Hd=(+s.dividerH>0)?Math.min(+s.dividerH,Hi):Hi;
+  const cross=(m.cross||[]).map(Number).filter(x=>x>=t+10&&x<=L-2*t-10).sort((a,b)=>a-b)
+    .filter((x,i,a)=>!i||x-a[i-1]>=t+10).map(x=>({x}));
+  const bays=baysOf(c,cross);
+  const subs=(m.subs||[]).map(sd=>{const dist=b=>+sd.x<b.x0?b.x0-sd.x:+sd.x>b.x1?sd.x-b.x1:0;
+    const i=bays.reduce((bi,b,k)=>dist(b)<dist(bays[bi])?k:bi,0);
+    const b=bays[i],y=Math.min(Math.max(+sd.y,t+10),W-2*t-10);
+    return{y,xs:b.x0,xe:b.x1,bay:i,startWall:i===0?'L':'cross',endWall:i===bays.length-1?'R':'cross'}}).filter(Boolean);
+  const built=buildComps(c),notes=built.notes.slice(),expected=[],cnt={};
+  if(subs.some((a,i)=>subs.slice(i+1).some(b=>a.bay===b.bay&&Math.abs(a.y-b.y)<t+5)))notes.push(['bad','Twee tussenschotten staan over elkaar. Schuif er een op of verwijder er een.']);
+  built.comps.forEach(cp=>{
+    if(cp.kind==='schot')cp.items.forEach(it=>{const id=it.tool.id,n=cnt[id]=(cnt[id]||0)+1;expected.push({key:`t:${id}:${n}`,kind:'tool',w:it.w,h:it.h,it,name:it.tool.name})});
+    else cp.bins.forEach(b=>expected.push({key:binKey(b.label),kind:'bin',w:b.w,h:b.h,bin:b,name:'bak '+b.label}));
+  });
+  const divRects=cross.map(d=>({x:d.x,y:t,w:t,h:W-2*t})).concat(subs.map(d=>({x:d.xs,y:d.y,w:d.xe-d.xs,h:t})));
+  const rects=[],missing=[];
+  expected.forEach(e=>{const p=m.items&&m.items[e.key];
+    if(p){const rot=!!p.rot;rects.push(Object.assign({},e,{X:+p.X,Y:+p.Y,SX:rot?e.h:e.w,SY:rot?e.w:e.h,rot}))}else missing.push(e)});
+  if(missing.length){
+    const obst=divRects.concat(rects.map(r=>({x:r.X,y:r.Y,w:r.SX,h:r.SY}))).map(o=>({x:o.x-t,y:o.y-t,w:o.w,h:o.h}));
+    const res=packTrunk(missing.map(e=>({w:e.w,h:e.h,e})),L-2*t,W-2*t,obst,cl/2);
+    res.placed.forEach(p=>rects.push(Object.assign({},p.it.e,{X:p.x+t,Y:p.y+t,SX:p.w,SY:p.h,rot:p.rot})));
+    res.left.forEach(r=>notes.push(['bad',`Geen vrije plek voor ${esc(r.e.name)}. Schuif iets op, haal een schot weg of klik op Automatisch indelen.`]));
+  }
+  rects.forEach(r=>{
+    const out=r.X<t-0.5||r.Y<t-0.5||r.X+r.SX>L-t+0.5||r.Y+r.SY>W-t+0.5;
+    const ov=divRects.concat(rects.filter(o=>o!==r).map(o=>({x:o.X,y:o.Y,w:o.SX,h:o.SY})))
+      .some(o=>r.X<o.x+o.w-0.5&&r.X+r.SX>o.x+0.5&&r.Y<o.y+o.h-0.5&&r.Y+r.SY>o.y+0.5);
+    r.bad=out||ov;
+    if(r.bad)notes.push(['bad',`${esc(r.name)} ${out?'steekt buiten de krat':'overlapt een schot of ander onderdeel'}.`]);
+  });
+  return{manual:true,Hd,cross,subs,comps:[],left:[],notes,
+    tools:rects.filter(r=>r.kind==='tool').map(r=>({X:r.X,Y:r.Y,SX:r.SX,SY:r.SY,it:r.it,key:r.key,rot:r.rot,bad:r.bad})),
+    bins:rects.filter(r=>r.kind==='bin').map(r=>({key:r.key,label:r.bin.label,X:r.X,Y:r.Y,L:r.SX,W:r.SY,H:r.bin.H,rot:r.rot,bad:r.bad,
+      tools:fillRect(r.bin.items,r.X+bt,r.Y+bt,r.SX-2*bt,r.SY-2*bt,cl/2,cl).placed}))};
+}
+/* Huidige indeling (automatisch of handmatig) vastleggen als handmatig, dan fn(m) toepassen. */
+function editManual(c,fn){
+  const lay=crateLayout(c),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y})),items:{}};
+  lay.tools.forEach(r=>{m.items[r.key]={X:Math.round(r.X),Y:Math.round(r.Y),rot:!!r.rot}});
+  lay.bins.forEach(b=>{m.items[b.key]={X:Math.round(b.X),Y:Math.round(b.Y),rot:!!b.rot}});
+  const was=!!c.manual;
+  fn(m,lay);
+  c.manual=m;scheduleSave();renderViz();
+  if(!was)toast('Handmatige indeling. Met Automatisch indelen zet je het terug.');
+}
+function snapIn(c,x,y,w,h,key){
+  const t=+S().t,L=+c.L,W=+c.W,lay=crateLayout(c),near=20,g=2;
+  const xs=[t,L-t-w],ys=[t,W-t-h];
+  lay.cross.forEach(d=>xs.push(d.x-w-g,d.x+t+g));
+  lay.subs.forEach(d=>ys.push(d.y-h-g,d.y+t+g));
+  lay.tools.concat(lay.bins.map(b=>({X:b.X,Y:b.Y,SX:b.L,SY:b.W,key:b.key}))).filter(r=>r.key!==key)
+    .forEach(r=>{xs.push(r.X+r.SX+g,r.X-w-g,r.X);ys.push(r.Y+r.SY+g,r.Y-h-g,r.Y)});
+  x=Math.min(Math.max(x,t),Math.max(t,L-t-w));y=Math.min(Math.max(y,t),Math.max(t,W-t-h));
+  const pick=(v,list)=>{let b=v,d=near;list.forEach(q=>{if(Math.abs(q-v)<d){d=Math.abs(q-v);b=q}});return b};
+  const sx=pick(x,xs),sy=pick(y,ys);
+  return[sx===x?Math.round(x/5)*5:sx,sy===y?Math.round(y/5)*5:sy];
 }
 function fitCrate(c){
   // Alle breedtes proberen; per breedte de kortste lengte. Voorkeur: past op de plaat en in de kofferbak, dan de vorm.
@@ -494,6 +572,7 @@ function fitCrate(c){
   if(!best)return false;
   // lengte is de langste kant
   c.L=Math.max(best.L,best.W);c.W=Math.min(best.L,best.W);c.H=best.H;
+  delete c.manual;
   return true;
 }
 
@@ -573,10 +652,8 @@ function cratePanels(c){
 }
 function binPanels(c){
   if(!layoutOn(c))return[];
-  const s=S(),bt=+s.binT||6,out=[],lay=crateLayout(c);
-  lay.comps.filter(cp=>cp.kind==='bak').forEach(cp=>cp.binsPlaced.forEach(b=>{
-    boxPanels(b.L,b.W,b.H,bt,+s.binFinger||20,false).forEach(p=>{p.name='bak '+b.label+' · '+p.name;out.push(p)});
-  }));
+  const s=S(),bt=+s.binT||6,out=[];
+  crateLayout(c).bins.forEach(b=>boxPanels(b.L,b.W,b.H,bt,+s.binFinger||20,false).forEach(p=>{p.name='bak '+b.label+' · '+p.name;out.push(p)}));
   return out;
 }
 function outline(p){
@@ -821,9 +898,9 @@ function renderTrunkForm(){
     <div class="dim-row">${f('h','Bruikbare hoogte')}${f('openW','Opening breed')}${f('openH','Opening hoog')}</div>
     <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep. Diepte bovenin = diepte op hoedenplankhoogte; leeg of 0 als de rugleuning recht staat.</p>`;
 }
-function toolRect(r,fs,tall){
+function toolRect(r,fs,tall,bad){
   const tl=r.it.tool;
-  let g=`<rect class="s-tool" x="${r.X}" y="${r.Y}" width="${r.SX}" height="${r.SY}" rx="3" style="fill:${catColor(tl.cat)};fill-opacity:.82"${tall?' stroke-dasharray="6 4"':''}><title>${esc(tl.name)} · ${fmt(tl.l)}×${fmt(tl.w)}×${fmt(tl.h)}</title></rect>`;
+  let g=`<rect class="s-tool" x="${r.X}" y="${r.Y}" width="${r.SX}" height="${r.SY}" rx="3" style="fill:${catColor(tl.cat)};fill-opacity:.82${bad?';stroke:var(--bad);stroke-width:3;stroke-opacity:1':''}"${tall?' stroke-dasharray="6 4"':''}><title>${esc(tl.name)} · ${fmt(tl.l)}×${fmt(tl.w)}×${fmt(tl.h)}</title></rect>`;
   const f=Math.min(fs,r.SX/Math.max(6,(tl.name||'').length*0.55),r.SY/2.6);
   if(f>=fs*0.4)g+=`<text class="s-txt" x="${r.X+r.SX/2}" y="${r.Y+r.SY/2}" font-size="${f}" text-anchor="middle" dominant-baseline="middle">${esc(tl.name)}</text>`;
   return g;
@@ -837,19 +914,18 @@ function crateVizHTML(c){
   const notes=[];let usedA=0,nDiv=0,nBins=0,nComp=0;
   if(layoutOn(c)){
     const lay=crateLayout(c);
-    lay.comps.forEach(cp=>{
-      nComp++;usedA+=cp.SX*cp.SY;
-      g+=`<rect class="s-comp" x="${cp.X}" y="${cp.Y}" width="${cp.SX}" height="${cp.SY}"/>`;
-      if(cp.kind==='schot')cp.tools.forEach(r=>{g+=toolRect(r,fs,r.it.H>inn.H)});
-      else cp.binsPlaced.forEach(b=>{nBins++;const bt=+s.binT||6;
-        g+=`<rect class="s-bin" x="${b.X}" y="${b.Y}" width="${b.L}" height="${b.W}" rx="1.5"><title>Bak ${esc(b.label)} · ${fmt(b.L)}×${fmt(b.W)}×${fmt(b.H)} mm</title></rect><rect class="s-bin-in" x="${b.X+bt}" y="${b.Y+bt}" width="${b.L-2*bt}" height="${b.W-2*bt}"/>`;
-        b.tools.forEach(r=>{g+=toolRect(r,fs*0.8,r.it.H>b.H-bt)});
-      });
+    lay.comps.forEach(cp=>{nComp++;usedA+=cp.SX*cp.SY;g+=`<rect class="s-comp" x="${cp.X}" y="${cp.Y}" width="${cp.SX}" height="${cp.SY}"/>`});
+    if(lay.manual)usedA=lay.tools.reduce((a,r)=>a+r.SX*r.SY,0)+lay.bins.reduce((a,b)=>a+b.L*b.W,0);
+    lay.tools.forEach(r=>{g+=toolRect(r,fs,r.it.H>inn.H,r.bad)});
+    lay.bins.forEach(b=>{nBins++;const bt=+s.binT||6;
+      g+=`<rect class="s-bin" x="${b.X}" y="${b.Y}" width="${b.L}" height="${b.W}" rx="1.5"${b.bad?' style="stroke:var(--bad);stroke-width:3"':''}><title>Bak ${esc(b.label)} · ${fmt(b.L)}×${fmt(b.W)}×${fmt(b.H)} mm</title></rect><rect class="s-bin-in" x="${b.X+bt}" y="${b.Y+bt}" width="${b.L-2*bt}" height="${b.W-2*bt}"/>`;
+      b.tools.forEach(r=>{g+=toolRect(r,fs*0.8,r.it.H>b.H-bt)});
     });
     lay.cross.forEach(cd=>{nDiv++;g+=`<rect class="s-div" x="${cd.x}" y="${t}" width="${t}" height="${inn.W}"/>`});
     lay.subs.forEach(sd=>{nDiv++;g+=`<rect class="s-div" x="${sd.xs}" y="${sd.y}" width="${sd.xe-sd.xs}" height="${t}"/>`});
+    if(lay.manual)notes.push(['',`Handmatige indeling, aangepast in de 3D-weergave. <button class="ghost" data-act="autolayout" data-id="${c.id}" style="padding:0;color:var(--accent)">Automatisch indelen</button>`]);
     notes.push(...lay.notes);
-    if(items.length&&!lay.notes.length)notes.push(['ok',`Alles past: ${nComp} vak(ken), ${nDiv} schot(ten)${nBins?`, ${nBins} losse bak(ken)`:''}.`]);
+    if(items.length&&!lay.notes.some(n=>n[0]==='bad'))notes.push(['ok',`Alles past: ${lay.manual?'':nComp+' vak(ken), '}${nDiv} schot(ten)${nBins?`, ${nBins} losse bak(ken)`:''}.`]);
   }else{
     const res=packBin(items,inn.L-cl,inn.W-cl,cl);
     res.placed.forEach(p=>{usedA+=p.w*p.h;g+=toolRect({X:t+cl/2+p.y,Y:t+cl/2+p.x,SX:p.h,SY:p.w,it:p.it},fs,p.it.H>inn.H)});
@@ -1060,20 +1136,27 @@ function toolBox(r,z,H){
   g.position.set(r.X+r.SX/2,r.Y+r.SY/2,z+Math.max(H,1)/2);
   return g;
 }
-function crateGroup(c){
+function redBox(obj){const bx=new THREE.Box3().setFromObject(obj);return new THREE.Box3Helper(bx,new THREE.Color(cssVar('--bad')))}
+function crateGroup(c,edit){
   const s=S(),t=+s.t,bt=+s.binT||6,L=+c.L,W=+c.W,g=new THREE.Group();
   const ply=mat3(cssVar('--ply')),dark=mat3(cssVar('--ply-edge')),edge=cssVar('--ply-edge'),edgeDark=cssVar('--ink');
-  cratePanels(c).forEach(p=>{const m=panelMesh(p,p.kind==='cross'||p.kind==='sub'?dark:ply,p.kind==='cross'||p.kind==='sub'?edgeDark:edge);m.applyMatrix4(panelMatrix(p,L,W));g.add(m)});
+  const reg=(o,data)=>{o.userData=data;if(edit)three.draggables.push(o)};
+  let ci=0,si=0;
+  cratePanels(c).forEach(p=>{
+    const dv=p.kind==='cross'||p.kind==='sub',m=panelMesh(p,dv?dark:ply,dv?edgeDark:edge);
+    m.applyMatrix4(panelMatrix(p,L,W));g.add(m);
+    if(dv)reg(m,{kind:p.kind,idx:p.kind==='cross'?ci++:si++});
+  });
   if(layoutOn(c)){
     const lay=crateLayout(c);
-    lay.comps.forEach(cp=>{
-      if(cp.kind==='schot'){if(tools3d)cp.tools.forEach(r=>g.add(toolBox(r,t,r.it.H)))}
-      else cp.binsPlaced.forEach(b=>{
-        const bg=new THREE.Group();
-        boxPanels(b.L,b.W,b.H,bt,+s.binFinger||20,false).forEach(p=>{const m=panelMesh(p,ply,edge);m.applyMatrix4(panelMatrix(p,b.L,b.W));bg.add(m)});
-        bg.position.set(b.X,b.Y,t);g.add(bg);
-        if(tools3d)b.tools.forEach(r=>g.add(toolBox(r,t+bt,r.it.H)));
-      });
+    if(tools3d)lay.tools.forEach(r=>{const b=toolBox(r,t,r.it.H);g.add(b);reg(b,{kind:'tool',key:r.key,X:r.X,Y:r.Y,SX:r.SX,SY:r.SY,rot:!!r.rot});if(r.bad)g.add(redBox(b))});
+    lay.bins.forEach(b=>{
+      const bg=new THREE.Group();
+      boxPanels(b.L,b.W,b.H,bt,+s.binFinger||20,false).forEach(p=>{const m=panelMesh(p,ply,edge);m.applyMatrix4(panelMatrix(p,b.L,b.W));bg.add(m)});
+      if(tools3d)b.tools.forEach(r=>bg.add(toolBox(Object.assign({},r,{X:r.X-b.X,Y:r.Y-b.Y}),bt,r.it.H)));
+      bg.position.set(b.X,b.Y,t);g.add(bg);
+      reg(bg,{kind:'bin',key:b.key,X:b.X,Y:b.Y,SX:b.L,SY:b.W,rot:!!b.rot});
+      if(b.bad)g.add(redBox(bg));
     });
   }else if(tools3d){
     const cl=+s.clearance,res=packBin(toolItems(crateTools(c)),L-2*t-cl,W-2*t-cl,cl);
@@ -1096,7 +1179,7 @@ function trunkGroup(){
   g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x,y,z])=>new THREE.Vector3(x,y,z))),line));
   res.placed.forEach(p=>{
     const c=p.it.c,cg=crateGroup(c);
-    cg.userData={crateId:c.id,fx:p.x,fy:p.y,w:p.w,h:p.h,rot:p.rot};
+    cg.userData={kind:'crate',crateId:c.id,fx:p.x,fy:p.y,w:p.w,h:p.h,rot:p.rot};
     three.draggables.push(cg);
     if(p.bad||(H&&+c.H>H)){const bx=new THREE.Box3().setFromObject(cg),hl=new THREE.Box3Helper(bx,new THREE.Color(cssVar('--bad')));g.add(hl)}
     // packTrunk: x over de breedte, y vanaf de achterklep; gedraaid = lengte in de diepte
@@ -1116,37 +1199,97 @@ function snapPos(x,y,w,h,id){
   const sx=near(x,xs),sy=near(y,ys);
   return[sx===x?Math.round(x/5)*5:sx,sy===y?Math.round(y/5)*5:sy];
 }
+function cur3d(){return view3d==='trunk'?null:state.crates.find(c=>c.id===view3d)||null}
 function setup3dDrag(){
-  const el=three.r.domElement,ray=new THREE.Raycaster(),floor=new THREE.Plane(new THREE.Vector3(0,0,1),0);
+  const el=three.r.domElement,ray=new THREE.Raycaster();
   let drag=null;
   const aim=e=>{const r=el.getBoundingClientRect();ray.setFromCamera(new THREE.Vector2(((e.clientX-r.left)/r.width)*2-1,-((e.clientY-r.top)/r.height)*2+1),three.cam)};
-  const crateAt=e=>{if(view3d!=='trunk')return null;aim(e);const hit=ray.intersectObjects(three.draggables,true)[0];
-    let o=hit&&hit.object;while(o&&!(o.userData&&o.userData.crateId))o=o.parent;return o||null};
-  const onFloor=()=>{const p=new THREE.Vector3();return ray.ray.intersectPlane(floor,p)?p:null};
-  // capture-fase: vóór OrbitControls, zodat draaien uit staat tijdens het slepen
+  const pick=e=>{aim(e);const hit=ray.intersectObjects(three.draggables,true)[0];
+    let o=hit&&hit.object;while(o&&!(o.userData&&o.userData.kind))o=o.parent;return o||null};
+  const onPlane=z=>{const p=new THREE.Vector3();return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,0,1),-z),p)?p:null};
+  // capture-fase: vóór OrbitControls, zodat het beeld niet draait tijdens het slepen
   el.addEventListener('pointerdown',e=>{
-    if(e.button!==0)return;const g=crateAt(e);if(!g)return;const p=onFloor();if(!p)return;
-    drag={g,start:p,x:g.userData.fx,y:g.userData.fy,moved:false};
-    three.controls.enabled=false;el.setPointerCapture(e.pointerId);el.style.cursor='grabbing';
+    if(e.button!==0)return;const o=pick(e);
+    if(!o){if(three.selected){three.selected=null;render3d()}return}
+    const z=o.userData.kind==='crate'?0:+S().t,p=onPlane(z);if(!p)return;
+    drag={o,u:o.userData,start:p,z,pos0:o.position.clone(),dx:0,dy:0,moved:false};
+    three.controls.enabled=false;try{el.setPointerCapture(e.pointerId)}catch(err){}el.style.cursor='grabbing';
   },true);
   el.addEventListener('pointermove',e=>{
-    if(!drag){el.style.cursor=crateAt(e)?'grab':'';return}
-    aim(e);const p=onFloor();if(!p)return;const u=drag.g.userData;
-    [drag.x,drag.y]=snapPos(u.fx+p.x-drag.start.x,u.fy+p.y-drag.start.y,u.w,u.h,u.crateId);
-    drag.moved=true;drag.g.position.x=drag.x+(u.rot?u.w:0);drag.g.position.y=drag.y;three.draw();
+    if(!drag){el.style.cursor=pick(e)?'grab':'';return}
+    aim(e);const p=onPlane(drag.z);if(!p)return;
+    const u=drag.u,c=cur3d(),t=+S().t;let dx=p.x-drag.start.x,dy=p.y-drag.start.y;
+    if(u.kind==='crate'){const[x,y]=snapPos(u.fx+dx,u.fy+dy,u.w,u.h,u.crateId);dx=x-u.fx;dy=y-u.fy}
+    else if(u.kind==='tool'||u.kind==='bin'){const[x,y]=snapIn(c,u.X+dx,u.Y+dy,u.SX,u.SY,u.key);dx=x-u.X;dy=y-u.Y}
+    else if(u.kind==='cross'){const x0=crateLayout(c).cross[u.idx].x,x=Math.round(Math.min(Math.max(x0+dx,t+30),c.L-2*t-30)/5)*5;dx=x-x0;dy=0}
+    else if(u.kind==='sub'){const y0=crateLayout(c).subs[u.idx].y,y=Math.round(Math.min(Math.max(y0+dy,t+20),c.W-2*t-20)/5)*5;dy=y-y0}
+    drag.dx=dx;drag.dy=dy;drag.moved=drag.moved||Math.abs(dx)+Math.abs(dy)>=1;
+    drag.o.position.set(drag.pos0.x+dx,drag.pos0.y+dy,drag.pos0.z);three.draw();
   });
   const end=()=>{
     if(!drag)return;three.controls.enabled=true;el.style.cursor='';
-    const u=drag.g.userData,c=state.crates.find(k=>k.id===u.crateId);
-    if(c&&drag.moved){c.pos={x:Math.round(drag.x),y:Math.round(drag.y),rot:!!u.rot};scheduleSave();renderViz()}
-    drag=null;
+    const{u,dx,dy,moved}=drag;drag=null;
+    if(u.kind==='crate'){
+      const c=state.crates.find(k=>k.id===u.crateId);
+      if(c&&moved){c.pos={x:Math.round(u.fx+dx),y:Math.round(u.fy+dy),rot:!!u.rot};scheduleSave();renderViz()}
+      return;
+    }
+    const c=cur3d();if(!c)return;
+    if(!moved){if(u.kind==='cross'||u.kind==='sub'){three.selected={kind:u.kind,idx:u.idx};render3d()}return}
+    editManual(c,m=>{
+      if(u.kind==='tool'||u.kind==='bin')m.items[u.key]={X:Math.round(u.X+dx),Y:Math.round(u.Y+dy),rot:!!u.rot};
+      else if(u.kind==='cross')m.cross[u.idx]=Math.round(m.cross[u.idx]+dx);
+      else if(u.kind==='sub'){m.subs[u.idx].x+=dx;m.subs[u.idx].y=Math.round(m.subs[u.idx].y+dy)}
+    });
+    three.selected=null;
   };
   el.addEventListener('pointerup',end);el.addEventListener('pointercancel',end);
   el.addEventListener('dblclick',e=>{
-    const g=crateAt(e);if(!g)return;const u=g.userData,c=state.crates.find(k=>k.id===u.crateId);if(!c)return;
-    const w=u.h,h=u.w,[x,y]=snapPos(u.fx+(u.w-w)/2,u.fy+(u.h-h)/2,w,h,u.crateId);
-    c.pos={x,y,rot:!u.rot};scheduleSave();renderViz();toast(`${c.name} gedraaid.`);
+    const o=pick(e);if(!o)return;const u=o.userData;
+    if(u.kind==='crate'){
+      const c=state.crates.find(k=>k.id===u.crateId);if(!c)return;
+      const w=u.h,h=u.w,[x,y]=snapPos(u.fx+(u.w-w)/2,u.fy+(u.h-h)/2,w,h,u.crateId);
+      c.pos={x,y,rot:!u.rot};scheduleSave();renderViz();toast(`${c.name} gedraaid.`);
+    }else if(u.kind==='tool'||u.kind==='bin'){
+      const c=cur3d();if(!c)return;
+      const[x,y]=snapIn(c,u.X+u.SX/2-u.SY/2,u.Y+u.SY/2-u.SX/2,u.SY,u.SX,u.key);
+      editManual(c,m=>{m.items[u.key]={X:x,Y:y,rot:!u.rot}});
+    }
   });
+}
+function deleteSelected(){
+  const c=cur3d(),sel=three&&three.selected;if(!c||!sel)return;
+  editManual(c,m=>{(sel.kind==='cross'?m.cross:m.subs).splice(sel.idx,1)});
+  three.selected=null;toast('Schot verwijderd.');
+}
+function addDivider(kind){
+  const c=cur3d();if(!c||!layoutOn(c))return;
+  const t=+S().t;
+  editManual(c,(m,lay)=>{
+    // vrije plek zoeken: langs de randen van gereedschap en bakken, anders in het midden van het langste vak
+    const occ=lay.tools.map(r=>({x:r.X,y:r.Y,w:r.SX,h:r.SY})).concat(lay.bins.map(b=>({x:b.X,y:b.Y,w:b.L,h:b.W})));
+    const bays=baysOf(c,lay.cross).sort((p,q)=>(q.x1-q.x0)-(p.x1-p.x0));
+    const free=(x,y,w,h)=>!occ.some(o=>x<o.x+o.w&&x+w>o.x&&y<o.y+o.h&&y+h>o.y);
+    if(kind==='cross'){
+      const cands=occ.map(o=>o.x+o.w+2).concat(occ.map(o=>o.x-t-2)).concat(bays.map(b=>(b.x0+b.x1)/2-t/2))
+        .filter(x=>x>=t+30&&x<=c.L-2*t-30&&!lay.cross.some(d=>Math.abs(d.x-x)<t+10));
+      const x=cands.find(x=>free(x,t,t,c.W-2*t))??cands[cands.length-1]??(c.L/2-t/2);
+      m.cross.push(Math.round(x));
+    }else{
+      for(const b of bays){
+        const cands=occ.map(o=>o.y+o.h+2).concat(occ.map(o=>o.y-t-2)).concat([c.W/2-t/2])
+          .filter(y=>y>=t+20&&y<=c.W-2*t-20&&!lay.subs.some(d=>d.bay===lay.cross.filter(q=>q.x<b.x0).length&&Math.abs(d.y-y)<t+10));
+        const y=cands.find(y=>free(b.x0,y,b.x1-b.x0,t));
+        if(y!=null){m.subs.push({x:(b.x0+b.x1)/2,y:Math.round(y)});return}
+      }
+      const b=bays[0];m.subs.push({x:(b.x0+b.x1)/2,y:Math.round(c.W/2-t/2)});
+    }
+  });
+}
+function updateEdit3d(){
+  const row=$('#v3-edit');if(!row||!row.tagName)return;
+  const c=cur3d();row.hidden=!(c&&layoutOn(c));
+  const del=$('#v3-del');if(del&&del.tagName)del.disabled=!(three&&three.selected);
 }
 function dispose3d(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()})}
 function render3d(){
@@ -1156,8 +1299,11 @@ function render3d(){
   three.draggables=[];
   three.r.setClearColor(new THREE.Color(cssVar('--panel')),1);
   const c=state.crates.find(x=>x.id===view3d);
-  three.root=c&&crateValid(c)?crateGroup(c):trunkGroup();
+  three.root=c&&crateValid(c)?crateGroup(c,layoutOn(c)):trunkGroup();
   scene.add(three.root);
+  if(three.selected){const o=three.draggables.find(d=>d.userData.kind===three.selected.kind&&d.userData.idx===three.selected.idx);
+    if(o)three.root.add(new THREE.Box3Helper(new THREE.Box3().setFromObject(o),new THREE.Color(cssVar('--accent'))));else three.selected=null}
+  updateEdit3d();
   if(fit3d){
     const box=new THREE.Box3().setFromObject(three.root);
     if(!box.isEmpty()){
@@ -1197,7 +1343,7 @@ document.addEventListener('change',e=>{
     if(car){Object.keys(car).forEach(k=>{if(k!=='label'&&k!=='note')tr[k]=Array.isArray(car[k])?car[k].slice():car[k]})}else tr.est=[];
     renderTrunkForm();renderViz();scheduleSave();toast(car?`Maten van de ${car.label} ingevuld.`:'Eigen maten: vul ze hieronder in.');return;
   }
-  if(el.id==='v3-sel'){view3d=el.value;fit3d=true;render3d();return}
+  if(el.id==='v3-sel'){view3d=el.value;fit3d=true;if(three)three.selected=null;render3d();return}
   if(el.id==='v3-tools'){tools3d=el.checked;render3d();return}
   if(el.dataset.act==='toggleex'){el.checked?excluded.delete(el.dataset.id):excluded.add(el.dataset.id);renderViz();return}
   if(el.id==='importFile'&&el.files&&el.files[0]){
@@ -1209,6 +1355,9 @@ document.addEventListener('change',e=>{
   if(s==='crate'&&k==='name'){renderTools();fill3dSelect()}
   if(s==='tool'&&(k==='crate'||k==='cat'||k==='group'))renderTools();
   if(s==='set'&&k==='t')renderSettings();
+});
+document.addEventListener('keydown',e=>{
+  if((e.key==='Delete'||e.key==='Backspace')&&three&&three.selected&&!/INPUT|SELECT|TEXTAREA/.test((document.activeElement||{}).tagName||'')){e.preventDefault();deleteSelected()}
 });
 let toastT=null;
 function toast(msg){let el=$('.toast');if(!el){el=document.createElement('div');el.className='toast';el.setAttribute('role','status');document.body.appendChild(el)}
@@ -1222,8 +1371,12 @@ document.addEventListener('click',async e=>{
     if(!armed[id]){armed[id]=true;b.textContent='Zeker weten?';b.classList.add('danger');setTimeout(()=>{armed[id]=false;if(b.isConnected){b.textContent='Verwijder';b.classList.remove('danger')}},3000);return}
     state.crates=state.crates.filter(c=>c.id!==id);state.tools.forEach(t=>{if(t.crate===id)t.crate=''});excluded.delete(id);renderAll();scheduleSave();toast('Krat verwijderd; het gereedschap staat weer als niet ingedeeld.')}
   else if(act==='v3fit'){fit3d=true;render3d()}
+  else if(act==='v3cross'){addDivider('cross')}
+  else if(act==='v3sub'){addDivider('sub')}
+  else if(act==='v3del'){deleteSelected()}
+  else if(act==='autolayout'){const c=state.crates.find(x=>x.id===(id||view3d));if(c){delete c.manual;if(three)three.selected=null;scheduleSave();renderViz();toast('Automatisch ingedeeld.')}}
   else if(act==='autopos'){state.crates.forEach(c=>{delete c.pos});renderViz();scheduleSave();toast('Alle kratten automatisch geschikt.')}
-  else if(act==='swap'){const c=state.crates.find(x=>x.id===id);if(!c)return;[c.L,c.W]=[c.W,c.L];renderAll();scheduleSave()}
+  else if(act==='swap'){const c=state.crates.find(x=>x.id===id);if(!c)return;[c.L,c.W]=[c.W,c.L];delete c.manual;renderAll();scheduleSave()}
   else if(act==='fit'){const c=state.crates.find(x=>x.id===id);if(!c)return;
     if(!toolItems(crateTools(c)).length){toast('Wijs eerst gereedschap toe aan deze krat.');return}
     if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden.')}
