@@ -17,9 +17,13 @@ Je meet je gereedschap op (accutollen, zagen, schuurmachines, accessoires…), d
 ## Planner (`index.html`)
 
 - Gereedschap invoeren: naam, soort, L × B × H, aantal en krat.
-- Per krat een bovenaanzicht van de indeling, met speling rondom en een waarschuwing als iets niet past of boven de rand uitsteekt. **Maat op inhoud** rekent de kleinste krat uit voor het toegewezen gereedschap.
+- Per krat een bovenaanzicht van de indeling, met speling rondom en een waarschuwing als iets niet past of boven de rand uitsteekt. **Maat op inhoud** rekent de kleinste krat uit voor het toegewezen gereedschap. Daarbij gaat de voorkeur naar een maat waarvan alle panelen op de plaat passen.
+- **Vakken:** elk gereedschap krijgt een eigen vak, en gereedschap met dezelfde *groep* deelt een vak. Per gereedschap kies je:
+  - **Schot:** een vast vak. De krat wordt in stroken verdeeld met dwarsschotten van wand tot wand, met tussenschotten daarbinnen. Alle schotten steken met lipjes door sleuven in de wanden, de bodem en de dwarsschotten.
+  - **Losse bak:** een uitneembare open bak met vingerverbindingen, standaard van 6 mm plaat. Accu's, laders, accessoires en handgereedschap gaan standaard in een losse bak.
+- Zet **Indeling** op *Vrij* voor een krat zonder schotten.
 - Kofferbak in bovenaanzicht: passen alle kratten op de vloer en onder de hoedenplank?
-- Snijbestanden als SVG in echte millimeters, verdeeld over platen.
+- Snijbestanden als SVG in echte millimeters, verdeeld over platen, met één set platen per plaatdikte.
 - Gegevens worden in de browser bewaard. Via **Instellingen → Gegevens** maak je een back-up (JSON) of laad je er een in.
 
 ## FreeCAD-macro
