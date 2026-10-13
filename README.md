@@ -50,6 +50,7 @@ Je meet je gereedschap op (accutollen, zagen, schuurmachines, accessoires…), d
 - Zet **Indeling** op *Vrij* voor een krat zonder schotten.
 - Kofferbak in bovenaanzicht: passen alle kratten op de vloer en onder de hoedenplank?
 - Snijbestanden als SVG in echte millimeters, verdeeld over platen, met één set platen per plaatdikte.
+- **Zagen & mallen**: voor panelen die groter zijn dan je machine (bijv. een CNC met 460 × 460 mm werkveld). Een zaaglijst (CSV) om platen op maat te zagen, en freesmallen voor een bovenfrees met kopieerring: per paneelrand een mal met vensters voor de vingers, vergroot met (kopieerring − frees) / 2, plus sleufmallen voor de schotten. De mallen worden op platen van je werkveld gelegd om zelf te snijden.
 - Gegevens worden in de browser bewaard. Via **Instellingen → Gegevens** maak je een back-up (JSON) of laad je er een in.
 
 ## FreeCAD-macro

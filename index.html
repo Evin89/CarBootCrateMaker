@@ -169,6 +169,8 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 .s-sheet{fill:var(--sheet);stroke:var(--line-strong)}
 .s-part{fill:var(--ply);stroke:var(--cut);fill-rule:evenodd}
 .s-label{fill:var(--engrave);font-family:Arial,sans-serif}
+.s-eng{stroke:var(--engrave);fill:var(--engrave);font-family:Arial,sans-serif}
+details ul{margin:8px 0 0;padding-left:18px}
 .s-div{fill:var(--ply-edge)}
 .s-bin{fill:var(--ply);stroke:var(--ply-edge);stroke-width:1}
 .s-bin-in{fill:var(--bg)}
@@ -190,7 +192,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
       <div class="save" id="save"><i></i><span>Laden…</span></div>
     </div>
     <nav>
-      <a href="#kofferbak">Kofferbak</a><a href="#weergave3d">3D</a><a href="#kratten">Kratten</a><a href="#gereedschap">Gereedschap</a><a href="#snijbestanden">Snijbestanden</a><a href="#instellingen">Instellingen</a>
+      <a href="#kofferbak">Kofferbak</a><a href="#weergave3d">3D</a><a href="#kratten">Kratten</a><a href="#gereedschap">Gereedschap</a><a href="#snijbestanden">Snijbestanden</a><a href="#zagen">Zagen &amp; mallen</a><a href="#instellingen">Instellingen</a>
     </nav>
     <div class="chips" id="chips"></div>
   </header>
@@ -254,6 +256,11 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
     </div>
   </section>
 
+  <section id="zagen">
+    <div class="sec-head"><h2>Zagen &amp; mallen</h2><p>Voor panelen die groter zijn dan je machine: zaag ze op maat met de zaaglijst en frees de vingers en sleuven met een kopieerring langs een mal.</p></div>
+    <div class="card" id="zagen-body"></div>
+  </section>
+
   <section id="instellingen">
     <div class="sec-head"><h2>Instellingen</h2><p>Meet je plaat na met een schuifmaat: 9 mm multiplex is in de praktijk vaak 8,7 tot 9,3 mm.</p></div>
     <div class="set-grid" id="settings"></div>
@@ -268,7 +275,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires','Handgereedschap','Overig'];
 const BAK_CATS=['Accu & lader','Accessoires','Handgereedschap'];
 const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
-  binT:6,binFinger:20,dividerH:0,mat:'multiplex',baseT:0,baseMat:'multiplex',base:{type:'geen',size:'heel',H:80,cross:[],subs:[],cols:1,rows:1},
+  binT:6,binFinger:20,dividerH:0,bushD:10,sawAllow:0,tplFor:'groot',mat:'multiplex',baseT:0,baseMat:'multiplex',base:{type:'geen',size:'heel',H:80,cross:[],subs:[],cols:1,rows:1},
   laserBed:[813,508],cncSheet:[2440,1220],trunk:{model:'',w:1000,d:850,h:450,archW:0,archFrom:200,archLen:400,dFolded:0,dTop:0,seat:'up',openW:0,openH:0,est:[]}};
 /* Bekende auto's. est = velden die geschat zijn en nagemeten moeten worden. */
 const CARS={
@@ -1181,6 +1188,153 @@ function renderTools(){
   $('#toolsFoot').textContent=state.tools.length?(un?`${un} item(s) nog niet in een krat (oranje streep).`:'Alles is ingedeeld.'):'';
 }
 let lastNest=null;
+/* ---------- zaaglijst en freesmallen (zagen op maat, verbindingen frezen met kopieerring) ---------- */
+function allParts(){
+  const out=[],tg=trunkGeom(),bg=baseGeom(tg);
+  state.crates.filter(c=>!excluded.has(c.id)&&crateValid(c)).forEach(c=>
+    cratePanels(c).concat(binPanels(c)).forEach(p=>out.push({p,owner:c.name,mat:S().mat||'multiplex'})));
+  if(!excluded.has('base'))basePanels(bg).forEach(p=>out.push({p,owner:'Basis',mat:S().baseMat||'multiplex'}));
+  return out;
+}
+/* afval rond een paneel = omhullende rechthoek min de contour, als rechthoeken (alle contouren zijn rechthoekig) */
+function wasteRects(p){
+  const pts=outline(p),W=p.w,H=p.h,eh=[];
+  for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[(i+1)%pts.length];if(Math.abs(a[1]-b[1])<1e-6&&Math.abs(a[0]-b[0])>1e-6)eh.push([Math.min(a[0],b[0]),Math.max(a[0],b[0]),a[1]])}
+  const xs=[...new Set([0,W,...pts.map(q=>+q[0].toFixed(4))])].sort((a,b)=>a-b),rects=[];
+  for(let i=0;i<xs.length-1;i++){
+    const x0=xs[i],x1=xs[i+1];if(x1-x0<1e-6)continue;const xm=(x0+x1)/2;
+    const ys=eh.filter(e=>e[0]<xm&&e[1]>xm).map(e=>e[2]).sort((a,b)=>a-b);
+    let y=0;const waste=[];
+    for(let k=0;k+1<ys.length;k+=2){if(ys[k]-y>1e-6)waste.push([y,ys[k]]);y=ys[k+1]}
+    if(H-y>1e-6)waste.push([y,H]);
+    waste.forEach(([a,b])=>{const pr=rects.find(r=>Math.abs(r.x1-x0)<1e-6&&Math.abs(r.y0-a)<1e-6&&Math.abs(r.y1-b)<1e-6);if(pr)pr.x1=x1;else rects.push({x0,x1,y0:a,y1:b})});
+  }
+  return rects;
+}
+/* per rand van het paneel: lengte en de weg te frezen stukken (u langs de rand, v vanaf de rand naar binnen) */
+function edgeCuts(p){
+  const W=p.w,H=p.h,e=1e-6,sides={onder:{len:W,r:[]},boven:{len:W,r:[]},links:{len:H,r:[]},rechts:{len:H,r:[]}};
+  wasteRects(p).forEach(r=>{
+    if(r.y0<e)sides.onder.r.push({u0:r.x0,u1:r.x1,d:r.y1});
+    if(r.y1>H-e)sides.boven.r.push({u0:W-r.x1,u1:W-r.x0,d:H-r.y0});
+    if(r.x0<e)sides.links.r.push({u0:r.y0,u1:r.y1,d:r.x1});
+    if(r.x1>W-e)sides.rechts.r.push({u0:H-r.y1,u1:H-r.y0,d:W-r.x0});
+  });
+  return Object.entries(sides).filter(([k,v])=>v.r.length).map(([k,v])=>({side:k,len:v.len,r:v.r.sort((a,b)=>a.u0-b.u0)}));
+}
+function tplSettings(){const s=S(),bit=+s.bit||6,bush=Math.max(+s.bushD||10,bit);return{bit,bush,o:(bush-bit)/2,rb:bush/2}}
+/* mallen: per unieke rand een of meer stukken die op het werkveld passen */
+function buildTemplates(){
+  const s=S(),[SW,SH]=sheetSize(),{bit,bush,o,rb}=tplSettings(),ext=25,maxL=Math.min(SW,SH)-10-2*ext;
+  const onBed=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
+  const uniq=new Map(),slots=new Map();
+  allParts().forEach(({p,owner})=>{
+    if(s.tplFor!=='alle'&&onBed(p.w,p.h))return;
+    edgeCuts(p).forEach(ed=>{
+      const key=ed.len.toFixed(1)+'|'+ed.r.map(r=>[r.u0,r.u1,r.d].map(v=>v.toFixed(1)).join(',')).join(';');
+      if(!uniq.has(key))uniq.set(key,{ed,uses:[]});
+      uniq.get(key).uses.push(`${owner} · ${p.name} (${ed.side})`);
+    });
+    (p.holes||[]).forEach(([u0,v0,u1,v1])=>{const k=[u1-u0,v1-v0].map(v=>v.toFixed(1)).sort().join('×');
+      if(!slots.has(k))slots.set(k,{w:Math.max(u1-u0,v1-v0),h:Math.min(u1-u0,v1-v0),n:0,uses:new Set()});const sl=slots.get(k);sl.n++;sl.uses.add(`${owner} · ${p.name}`)});
+  });
+  const pieces=[];let ti=0;
+  for(const{ed,uses}of uniq.values()){
+    ti++;const name='M'+ti,vmax=Math.max(...ed.r.map(r=>r.d))+o;
+    // knippunten midden tussen twee vensters, zodat een stuk nooit door een venster loopt
+    const cuts=[];for(let i=0;i+1<ed.r.length;i++)cuts.push((ed.r[i].u1+ed.r[i+1].u0)/2);
+    const avail=Math.min(SW,SH)-10,ranges=[];let st=0;
+    for(;;){const u0=st===0?-ext:st;
+      if(ed.len+ext-u0<=avail){ranges.push([st,ed.len]);break}
+      const c=cuts.filter(x=>x>st+20&&x<=u0+avail).pop();
+      // geen plek tussen twee vensters: knip midden in een venster, met 40 mm overlap zodat de frezing doorloopt
+      if(c==null){const cc=u0+avail-10;ranges.push([st,cc]);st=cc-40;continue}
+      ranges.push([st,c]);st=c;}
+    ranges.forEach(([a,b],pi)=>{
+      const U0=a<1e-6?a-ext:a,U1=b>ed.len-1e-6?b+ext:b,V0=-ext,V1=vmax+45,X=u=>u-U0,Y=v=>v-V0;
+      let d=`M${f2(X(U0))} ${f2(Y(V0))}H${f2(X(U1))}V${f2(Y(V1))}H${f2(X(U0))}Z`,eng='';
+      ed.r.filter(r=>r.u1>a+1e-6&&r.u0<b-1e-6).forEach(r=>{
+        let w0=r.u0<1e-6?-15:r.u0-o,w1=r.u1>ed.len-1e-6?ed.len+15:r.u1+o;
+        if(a>1e-6)w0=Math.max(w0,a+10);if(b<ed.len-1e-6)w1=Math.min(w1,b-10);if(w1-w0<2*rb)return;
+        d+=rrect(X(w0),Y(-15),X(w1),Y(r.d+o),rb);
+      });
+      const fs=6,line=(x1,y1,x2,y2)=>`<line x1="${f2(x1)}" y1="${f2(y1)}" x2="${f2(x2)}" y2="${f2(y2)}"/>`;
+      eng+=line(X(U0),Y(0),X(U1),Y(0));
+      if(a<1e-6)eng+=line(X(0),Y(V0),X(0),Y(V1));
+      if(b>ed.len-1e-6)eng+=line(X(ed.len),Y(V0),X(ed.len),Y(V1));
+      if(a>1e-6)eng+=line(X(a)+3,Y(vmax+5),X(a)+3,Y(V1));
+      if(b<ed.len-1e-6)eng+=line(X(b)-3,Y(vmax+5),X(b)-3,Y(V1));
+      const txt=`${name}${ranges.length>1?` deel ${pi+1}/${ranges.length}`:''} · ring Ø${fmt(bush,1)} frees Ø${fmt(bit,1)} · rand ${fmt(ed.len)} mm`;
+      eng+=`<text x="${f2(X(U0)+6)}" y="${f2(Y(V1)-8)}" font-size="${fs}">${esc(txt)}</text>`;
+      pieces.push({name,part:pi+1,parts:ranges.length,w:U1-U0,h:V1-V0,d,eng,uses,len:ed.len});
+    });
+  }
+  let si=0;
+  for(const sl of slots.values()){
+    si++;const name='S'+si,m=30,W=sl.w+2*o+2*m,H=sl.h+2*o+2*m,cx=W/2,cy=H/2;
+    const d=`M0 0H${f2(W)}V${f2(H)}H0Z`+rrect(cx-sl.w/2-o,cy-sl.h/2-o,cx+sl.w/2+o,cy+sl.h/2+o,Math.min(rb,(sl.h+2*o)/2));
+    const eng=`<line x1="${f2(cx)}" y1="4" x2="${f2(cx)}" y2="${f2(H-4)}"/><line x1="4" y1="${f2(cy)}" x2="${f2(W-4)}" y2="${f2(cy)}"/><text x="4" y="${f2(H-4)}" font-size="5">${esc(name)} · sleuf ${fmt(sl.w,1)}×${fmt(sl.h,1)} · ${sl.n}×</text>`;
+    pieces.push({name,part:1,parts:1,w:W,h:H,d,eng,uses:[...sl.uses],slot:sl});
+  }
+  // stukken op platen van de machine leggen
+  const r=[];let rest=pieces.map(pc=>({w:pc.w,h:pc.h,pc}));
+  while(rest.length&&r.length<40){const pk=packBin(rest,SW-10,SH-10,6);if(!pk.placed.length)break;r.push(pk.placed.map(pl=>Object.assign(pl,{x:pl.x+5,y:pl.y+5})));rest=pk.left}
+  return{pieces,sheets:r,SW,SH,o,bit,bush,nTpl:uniq.size,nSlot:slots.size};
+}
+function tplSheetSVG(sheet,SW,SH,preview){
+  const body=sheet.map(pl=>{const pc=pl.it.pc,tr=pl.rot?`translate(${f2(pl.x+pc.h)} ${f2(pl.y)}) rotate(90)`:`translate(${f2(pl.x)} ${f2(pl.y)})`;
+    return preview?`<g transform="${tr}"><path class="s-part" d="${pc.d}" stroke-width="${f2(SW/400)}"/><g class="s-eng" stroke-width="${f2(SW/700)}">${pc.eng}</g></g>`
+      :`<g transform="${tr}"><path d="${pc.d}" fill="none" stroke="#ff0000" stroke-width="0.01"/><g stroke="#0000ff" stroke-width="0.2" fill="#0000ff" font-family="Arial, sans-serif">${pc.eng}</g></g>`}).join('\n');
+  return preview?`<svg viewBox="0 0 ${SW} ${SH}" role="img" aria-label="Plaat met freesmallen"><rect class="s-sheet" x="0" y="0" width="${SW}" height="${SH}" stroke-width="${SW/300}"/>${body}</svg>`
+    :`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${SW}mm" height="${SH}mm" viewBox="0 0 ${SW} ${SH}">\n<!-- Kofferbakkratten · freesmallen · rood = snijden, blauw = graveren/markeren -->\n${body}\n</svg>\n`;
+}
+function cutList(){
+  const s=S(),[SW,SH]=sheetSize(),al=+s.sawAllow||0,rows=new Map();
+  const onBed=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
+  allParts().forEach(({p,owner,mat})=>{
+    const w=Math.max(p.w,p.h),h=Math.min(p.w,p.h),key=[p.t,mat,w.toFixed(1),h.toFixed(1)].join('|');
+    if(!rows.has(key))rows.set(key,{t:p.t,mat,w,h,n:0,names:[],bed:onBed(p.w,p.h)});
+    const r=rows.get(key);r.n++;r.names.push(`${owner} · ${p.name}`);
+  });
+  return[...rows.values()].sort((a,b)=>b.t-a.t||a.mat.localeCompare(b.mat)||b.w*b.h-a.w*a.h).map(r=>Object.assign(r,{sw:r.w+2*al,sh:r.h+2*al}));
+}
+function cutListCSV(rows){
+  const q=v=>`"${String(v).replace(/"/g,'""')}"`;
+  return['Plaat;Materiaal;Zaagmaat lengte (mm);Zaagmaat breedte (mm);Eindmaat;Aantal;Maken met;Onderdelen']
+    .concat(rows.map(r=>[fmt(r.t,1)+' mm',r.mat,fmt(r.sw,1),fmt(r.sh,1),`${fmt(r.w,1)} × ${fmt(r.h,1)}`,r.n,r.bed?'machine':'zaag + mal',r.names.join(', ')].map(q).join(';'))).join('\r\n');
+}
+let lastTpl=null;
+function renderSaw(){
+  const el=$('#zagen-body');if(!el||!el.tagName)return;
+  const s=S(),rows=cutList();
+  if(!rows.length){el.innerHTML='<div class="empty"><b>Nog geen onderdelen</b><p>Voeg een krat toe.</p></div>';return}
+  const T=buildTemplates();lastTpl=T;
+  const big=rows.filter(r=>!r.bed).reduce((a,r)=>a+r.n,0);
+  el.innerHTML=`
+  <div class="sheet-ctl">
+    <div class="field"><label for="z-bush">Kopieerring Ø</label><input type="number" step="0.1" id="z-bush" value="${s.bushD}" data-s="set" data-k="bushD"></div>
+    <div class="field"><label for="z-bit">Frees Ø</label><input type="number" step="0.05" id="z-bit" value="${s.bit}" data-s="set" data-k="bit"></div>
+    <div class="field"><label for="z-al">Zaagtoeslag</label><input type="number" step="0.5" id="z-al" value="${s.sawAllow}" data-s="set" data-k="sawAllow"></div>
+    <div class="field"><label for="z-for">Mallen voor</label><select id="z-for" data-s="set" data-k="tplFor"><option value="groot" ${s.tplFor!=='alle'?'selected':''}>panelen die niet op de machine passen</option><option value="alle" ${s.tplFor==='alle'?'selected':''}>alle panelen</option></select></div>
+  </div>
+  <div style="padding:16px;display:flex;flex-direction:column;gap:16px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap"><h3>Zaaglijst</h3>
+      <span style="display:flex;gap:6px">${(dl||LOCAL)?'<button class="primary" data-act="csvdl">Download CSV</button>':''}<button data-act="csvcopy">Kopieer</button></span></div>
+    <p class="hint">${big?`${big} onderdeel/onderdelen passen niet op ${sheetSize().join(' × ')} mm: zaag die op maat en frees de verbindingen met de mallen hieronder.`:'Alles past op de machine; de zaaglijst is handig om platen voor te zagen.'} Zaagmaat = eindmaat ${+s.sawAllow?`+ 2 × ${fmt(+s.sawAllow,1)} mm toeslag`:'(zaag zo exact mogelijk: de mallen leggen aan tegen de rand van het paneel)'}.</p>
+    <div class="table-wrap"><table style="min-width:720px"><thead><tr><th>Plaat</th><th class="r">Zaagmaat</th><th class="r">Aantal</th><th>Maken met</th><th>Onderdelen</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td>${fmt(r.t,1)} mm ${esc(r.mat)}</td><td class="num" style="text-align:right;white-space:nowrap">${fmt(r.sw,1)} × ${fmt(r.sh,1)}</td><td class="num" style="text-align:right">${r.n}</td><td>${r.bed?'machine':'<b>zaag + mal</b>'}</td><td style="font-size:13px;color:var(--muted)">${esc(r.names.slice(0,4).join(', '))}${r.names.length>4?` en ${r.names.length-4} meer`:''}</td></tr>`).join('')}
+    </tbody></table></div>
+    <h3>Freesmallen</h3>
+    ${T.pieces.length?`<p class="hint">${T.nTpl} randmal(len)${T.nSlot?` en ${T.nSlot} sleufmal(len)`:''}, ${T.pieces.length} stuk(ken) op ${T.sheets.length} plaat/platen van ${T.SW} × ${T.SH} mm. Snijd de mallen uit 6 mm MDF of multiplex.
+      Vensters zijn ${fmt(T.o,1)} mm groter dan de te frezen ruimte: (kopieerring Ø${fmt(T.bush,1)} − frees Ø${fmt(T.bit,1)}) / 2.
+      Leg de blauwe lijn <i>rand</i> op de rand van het paneel en de lijn <i>einde</i> op het einde, klem vast en frees met de kopieerring langs de vensters, in stappen tot de volle diepte.
+      Binnenhoeken krijgen de straal van de frees: zet ze haaks met een beitel of rond de hoeken van de vingers iets af. Sleufmallen: leg het kruis op je potloodkruis.</p>
+      <div class="sheets" style="padding:0">${T.sheets.map((sh,i)=>`<div class="sheet">${tplSheetSVG(sh,T.SW,T.SH,true)}
+        <div class="sheet-foot"><span>Mallenplaat ${i+1} · ${sh.length} stuk(ken)</span><span style="display:flex;gap:6px">${(dl||LOCAL)?`<button class="primary" data-act="tpldl" data-i="${i}">Download SVG</button>`:''}<button data-act="tplcopy" data-i="${i}">Kopieer SVG</button></span></div></div>`).join('')}</div>
+      <details><summary class="hint">Welke mal hoort bij welk paneel</summary><ul class="hint">${[...new Map(T.pieces.map(p=>[p.name,p])).values()].map(p=>`<li><b>${p.name}</b>${p.parts>1?` (${p.parts} delen)`:''}: ${esc(p.uses.join(', '))}</li>`).join('')}</ul></details>`
+    :'<p class="hint">Geen mallen nodig: alle panelen passen op de machine. Kies "alle panelen" als je toch met mallen wilt werken.</p>'}
+  </div>`;
+}
 function renderSheets(){
   const s=S(),nest=nestAll(),[SW,SH]=[nest.SW,nest.SH];
   lastNest=nest;
@@ -1255,7 +1409,7 @@ function renderSettings(){
 }
 let vizQueued=false;
 function renderViz(){if(vizQueued)return;vizQueued=true;const run=()=>{if(!vizQueued)return;vizQueued=false;
-  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{render3d()}catch(e){console.error(e)}};
+  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{renderSaw()}catch(e){console.error(e)}try{render3d()}catch(e){console.error(e)}};
   // frame-timer, met een gewone timer als reserve (die staat stil in verborgen tabbladen)
   requestAnimationFrame(run);setTimeout(run,60)}
 function renderAll(){renderTrunkForm();fill3dSelect();renderStacks();renderCrates();renderTools();renderSettings();renderViz()}
@@ -1735,6 +1889,17 @@ document.addEventListener('click',async e=>{
   else if(act==='sample'){loadSample()}
   else if(act==='export'){try{await saveFile('kofferbakkratten-gegevens.json',JSON.stringify(state,null,2),'application/json');toast('Gegevens opgeslagen.')}catch(err){if(err&&err.code!=='declined')toast('Opslaan lukt hier niet.')}}
   else if(act==='import'){$('#importFile').click()}
+  else if(act==='csvdl'||act==='csvcopy'){
+    const csv=cutListCSV(cutList());
+    if(act==='csvdl'){try{await saveFile('zaaglijst.csv','\ufeff'+csv,'text/csv');toast('Zaaglijst opgeslagen.')}catch(err){if(err&&err.code!=='declined')toast('Opslaan lukt hier niet; gebruik Kopieer.')}}
+    else{try{await navigator.clipboard.writeText(csv.replace(/;/g,'\t'));toast('Zaaglijst gekopieerd; plak hem in een spreadsheet.')}catch(err){toast('Kopiëren werd geweigerd.')}}
+  }
+  else if(act==='tpldl'||act==='tplcopy'){
+    const T=lastTpl||buildTemplates(),i=+b.dataset.i,sh=T.sheets[i];if(!sh)return;
+    const svg=tplSheetSVG(sh,T.SW,T.SH,false),name=`kofferbakkratten-mallen-${i+1}.svg`;
+    if(act==='tpldl'){try{await saveFile(name,svg,'image/svg+xml');toast('Opgeslagen: '+name)}catch(err){if(err&&err.code!=='declined')toast('Downloaden lukt hier niet; gebruik Kopieer SVG.')}}
+    else{try{await navigator.clipboard.writeText(svg);toast('SVG gekopieerd.')}catch(err){toast('Kopiëren werd geweigerd.')}}
+  }
   else if(act==='dl'||act==='copy'){
     const nest=lastNest||nestAll(),grp=nest.groups[+b.dataset.g],i=+b.dataset.i,sh=grp&&grp.sheets[i];if(!sh)return;
     const svg=sheetFile(sh,nest.SW,nest.SH,grp.t),name=`kofferbakkratten-${grp.t}mm-plaat-${i+1}-${S().machine}.svg`;
