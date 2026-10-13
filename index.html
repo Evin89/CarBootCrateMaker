@@ -218,6 +218,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
       <div class="sheet-ctl" id="v3-edit" hidden>
         <button data-act="v3cross">+ Dwarsschot</button>
         <button data-act="v3sub">+ Tussenschot</button>
+        <button class="primary" data-act="v3fitdiv" title="Oude schotten weg, nieuwe schotten strak om alles wat er nu staat">Schotten passend maken</button>
         <button data-act="v3del" id="v3-del" disabled>Verwijder schot</button>
         <button data-act="autolayout" id="v3-auto">Automatisch indelen</button>
         <span class="hint" id="v3-hint">Sleep gereedschap, bakken en schotten. Dubbelklik draait gereedschap of een bak. Klik een schot aan en druk op Delete om het te verwijderen.</span>
@@ -1539,6 +1540,59 @@ function addDivider(kind){
     if(kind==='cross')m.cross.push(sp.x);else m.subs.push(sp);
   });
 }
+/* Schotten strak om onderdelen die al op hun plek staan (rects in doos-coördinaten, wand van t dik).
+   Niveau 1: dwarsschotten tussen kolommen, 2: tussenschotten binnen elke strook, 3: eindschotten binnen elk vak. */
+function fitDividers(L,W,t,rects,clr){
+  const minGap=t+2;
+  const merge=(items,a,b)=>{const iv=items.map(r=>[r[a],r[a]+r[b]]).sort((p,q)=>p[0]-q[0]),out=[];
+    iv.forEach(([s0,e])=>{const l=out[out.length-1];if(l&&s0<l[1]+minGap)l[1]=Math.max(l[1],e);else out.push([s0,e])});return out};
+  // posities (voorkant van het schot) in de vrije ruimte rond groepen, tussen lo en hi
+  const place=(groups,lo,hi)=>{const out=[];if(!groups.length)return out;
+    if(groups[0][0]-lo>=t+clr+15)out.push(groups[0][0]-clr-t);
+    groups.forEach((g,i)=>{const nx=groups[i+1];if(!nx)return;const a=g[1],b=nx[0];
+      if(b-a>=2*t+2*clr+20)out.push(a+clr,b-clr-t);else if(b-a>=minGap)out.push((a+b)/2-t/2)});
+    const last=groups[groups.length-1];if(hi-last[1]>=t+clr+15)out.push(last[1]+clr);
+    return out.map(v=>Math.round(v))};
+  const R=rects.map(r=>({x:r.x,y:r.y,w:r.w,h:r.h}));
+  const cross=place(merge(R,'x','w'),t,L-t);
+  const bays=baysOf({L},cross.map(x=>({x})));
+  const subs=[],ends=[];
+  bays.forEach(b=>{
+    const inBay=R.filter(r=>r.x+r.w/2>=b.x0&&r.x+r.w/2<=b.x1);if(!inBay.length)return;
+    const ys=place(merge(inBay,'y','h'),t,W-t);
+    ys.forEach(y=>subs.push({x:(b.x0+b.x1)/2,y}));
+    const edges=[t-t].concat(ys,[W-t]);
+    edges.slice(0,-1).forEach((y0,i)=>{
+      const cy0=i?y0+t:t,cy1=edges[i+1],inCell=inBay.filter(r=>r.y+r.h/2>=cy0&&r.y+r.h/2<=cy1);if(!inCell.length)return;
+      place(merge(inCell,'x','w'),b.x0,b.x1).forEach(x=>ends.push({x,y:(cy0+cy1)/2}));
+    });
+  });
+  return{cross,subs,ends};
+}
+function fitDividersNow(){
+  if(view3d==='trunk'){
+    const T=lastTrunk,bg=T&&T.bg;if(!bg||bg.type!=='bak')return;
+    const inBase=T.res.placed.filter(p=>p.z);
+    if(!inBase.length){toast('Er staan nog geen kratten in de basis.');return}
+    // kratten vastzetten op hun huidige plek, zodat ze niet verschuiven als de schotten veranderen
+    inBase.forEach(p=>{const c=p.it.c;c.pos={x:Math.round(p.x),y:Math.round(p.y),rot:!!p.rot}});
+    const f=fitDividers(bg.w,bg.h,bg.t,inBase.map(p=>({x:p.x-bg.x,y:p.y-bg.y,w:p.w,h:p.h})),5);
+    Object.assign(S().base,{auto:false,cross:f.cross,subs:f.subs,ends:f.ends});
+    if(three)three.selected=null;
+    renderTrunkForm();scheduleSave();renderViz();
+    toast(`Schotten aangepast: ${f.cross.length+f.subs.length+f.ends.length} schot(ten) rond ${inBase.length} krat(ten).`);
+    return;
+  }
+  const c=cur3d();if(!c||!layoutOn(c))return;
+  const cl=+S().clearance;
+  editManual(c,(m,lay)=>{
+    const rects=lay.tools.map(r=>({x:r.X,y:r.Y,w:r.SX,h:r.SY})).concat(lay.bins.map(b=>({x:b.X,y:b.Y,w:b.L,h:b.W})));
+    const f=fitDividers(+c.L,+c.W,+S().t,rects,Math.max(2,cl/2));
+    m.cross=f.cross;m.subs=f.subs;m.ends=f.ends;
+  });
+  if(three)three.selected=null;
+  toast('Schotten aangepast rond gereedschap en bakken.');
+}
 function updateEdit3d(){
   const row=$('#v3-edit');if(!row||!row.tagName)return;
   const c=cur3d(),bg=baseGeom(trunkGeom()),onBase=view3d==='trunk'&&bg&&bg.type==='bak';
@@ -1546,7 +1600,7 @@ function updateEdit3d(){
   const del=$('#v3-del');if(del&&del.tagName)del.disabled=!(three&&three.selected);
   const auto=$('#v3-auto');if(auto&&auto.tagName)auto.textContent=onBase?'Schotten basis wissen':'Automatisch indelen';
   const hint=$('#v3-hint');if(hint&&hint.tagName)hint.textContent=onBase
-    ?'Schotten in de basisbak: slepen om te verplaatsen, aanklikken en Delete om te verwijderen. Kratten worden er omheen geplaatst.'
+    ?'Schotten in de basisbak: slepen om te verplaatsen, aanklikken en Delete om te verwijderen. Heb je kratten zelf neergezet, klik dan op Schotten passend maken.'
     :'Sleep gereedschap, bakken en schotten. Dubbelklik draait gereedschap of een bak. Klik een schot aan en druk op Delete om het te verwijderen.';
 }
 function dispose3d(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()})}
@@ -1634,6 +1688,7 @@ document.addEventListener('click',async e=>{
     if(!armed[id]){armed[id]=true;b.textContent='Zeker weten?';b.classList.add('danger');setTimeout(()=>{armed[id]=false;if(b.isConnected){b.textContent='Verwijder';b.classList.remove('danger')}},3000);return}
     state.crates=state.crates.filter(c=>c.id!==id);state.tools.forEach(t=>{if(t.crate===id)t.crate=''});excluded.delete(id);renderAll();scheduleSave();toast('Krat verwijderd; het gereedschap staat weer als niet ingedeeld.')}
   else if(act==='v3fit'){fit3d=true;render3d()}
+  else if(act==='v3fitdiv'){fitDividersNow()}
   else if(act==='v3cross'){addDivider('cross')}
   else if(act==='v3sub'){addDivider('sub')}
   else if(act==='v3del'){deleteSelected()}
