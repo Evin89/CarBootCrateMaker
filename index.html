@@ -17,6 +17,7 @@
   --accent:#0d6b5a; --accent-ink:#ffffff; --accent-soft:#d7ebe5;
   --ply:#e6cc9f; --ply-edge:#b38950; --sheet:#f6efe2; --cut:#d4251c; --engrave:#1d4fd0;
   --ok:#2c7a3c; --warn:#a86b12; --bad:#bf3328; --ok-soft:#dcefdf; --warn-soft:#f6e8cf; --bad-soft:#f7dcd8;
+  --makita:#0f8c95; --makita-dark:#0b5f66;
   --c0:#c98f4a; --c1:#4f86b8; --c2:#7a9e4c; --c3:#b8605a; --c4:#8a6fb0; --c5:#4c9c97; --c6:#8b8f86;
   --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
   --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
@@ -27,6 +28,7 @@
   --accent:#45b39c; --accent-ink:#0b1512; --accent-soft:#1d3a33;
   --ply:#7d6340; --ply-edge:#c9a46c; --sheet:#262420; --cut:#ff5d50; --engrave:#86a6ff;
   --ok:#6cc47d; --warn:#e0a84a; --bad:#ff7a6e; --ok-soft:#1d3323; --warn-soft:#3a2d17; --bad-soft:#3d1f1c;
+  --makita:#2fb3bb; --makita-dark:#1b7a80;
   --c0:#c99a5f; --c1:#6b9fd0; --c2:#93b86a; --c3:#d07b74; --c4:#a68ccc; --c5:#62b5af; --c6:#9ca197;
   color-scheme:dark}}
 :root[data-theme="dark"]{
@@ -34,6 +36,7 @@
   --accent:#45b39c; --accent-ink:#0b1512; --accent-soft:#1d3a33;
   --ply:#7d6340; --ply-edge:#c9a46c; --sheet:#262420; --cut:#ff5d50; --engrave:#86a6ff;
   --ok:#6cc47d; --warn:#e0a84a; --bad:#ff7a6e; --ok-soft:#1d3323; --warn-soft:#3a2d17; --bad-soft:#3d1f1c;
+  --makita:#2fb3bb; --makita-dark:#1b7a80;
   --c0:#c99a5f; --c1:#6b9fd0; --c2:#93b86a; --c3:#d07b74; --c4:#a68ccc; --c5:#62b5af; --c6:#9ca197;
   color-scheme:dark}
 *{box-sizing:border-box}
@@ -152,6 +155,10 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 .s-base-in{fill:var(--panel);fill-opacity:.6}
 .est{font-size:11px;color:var(--warn);font-weight:600;white-space:nowrap}
 .s-crate{fill:var(--ply);stroke:var(--ply-edge);stroke-width:2}
+.s-stack{fill:var(--makita);stroke:var(--makita-dark)}
+.stack-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.stack-cases{display:flex;flex-wrap:wrap;gap:6px}
+.case-chip{display:inline-flex;align-items:center;gap:4px;background:var(--bg);border:1px solid var(--line-strong);border-radius:3px;padding:2px 2px 2px 8px;font-size:13px}
 .s-crate.over{fill:var(--bad-soft);stroke:var(--bad)}
 .s-txt{fill:var(--ink);font-family:var(--display);font-weight:600}
 .s-sub{fill:var(--muted);font-family:var(--mono)}
@@ -221,6 +228,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 
   <section id="kratten">
     <div class="sec-head"><h2>Kratten</h2><p>Buitenmaten in mm. De binnenmaat is lengte en breedte min 2× plaatdikte, hoogte min 1× (de bodem).</p><button class="primary" data-act="addcrate">+ Krat</button></div>
+    <div id="stacks"></div>
     <div class="crates" id="crates"></div>
   </section>
 
@@ -268,7 +276,13 @@ const CARS={
 };
 const DENSITY=680; // kg/m³ berken multiplex
 const BIN_GAP=3;   // speling rond losse bakken
-let state={v:1,settings:clone(DEF),crates:[],tools:[]};
+let state={v:1,settings:clone(DEF),crates:[],tools:[],stacks:[]};
+/* Makita MAKPAC: zelfde grondvlak, vier hoogtes (type 2 en 3 verschillen per bron een paar mm: meet na). */
+const MAKPAC={L:396,W:296,types:{1:105,2:157,3:210,4:315}};
+function stackH(st){return(st.cases||[]).reduce((a,k)=>a+(+k.h||0),0)}
+/* alles wat in de kofferbak staat: zelfgemaakte kratten en stapels koffers */
+function trunkItems(){(state.stacks||[]).forEach(st=>{st.isStack=true;st.H=stackH(st)});return state.crates.concat((state.stacks||[]).filter(st=>st.H>0))}
+function itemById(id){return state.crates.find(k=>k.id===id)||(state.stacks||[]).find(k=>k.id===id)}
 let excluded=new Set();
 let db=null, docRef=null, dl=null, lastSaved='', saveTimer=null, writeChain=Promise.resolve(), pendingRemote=null;
 const $=s=>document.querySelector(s);
@@ -288,7 +302,7 @@ function normalize(d){
   const s=Object.assign(clone(DEF),d&&d.settings||{});
   s.trunk=Object.assign(clone(DEF.trunk),d&&d.settings&&d.settings.trunk||{});
   s.base=Object.assign(clone(DEF.base),d&&d.settings&&d.settings.base||{});
-  return {v:1,settings:s,crates:Array.isArray(d&&d.crates)?d.crates:[],tools:Array.isArray(d&&d.tools)?d.tools:[]};
+  return {v:1,settings:s,crates:Array.isArray(d&&d.crates)?d.crates:[],tools:Array.isArray(d&&d.tools)?d.tools:[],stacks:Array.isArray(d&&d.stacks)?d.stacks:[]};
 }
 function vakOf(t){return t.vak||(BAK_CATS.includes(t.cat)?'bak':'schot')}
 function layoutOn(c){return c.layout!=='vrij'}
@@ -875,7 +889,7 @@ function subsInBays(list,bays,W,t){
 const baseAutoCache=new Map();
 /* "Schotten rond elke krat": kratten in stroken in de basisbak, met een schot tussen elke krat (zelfde indeling als vakken in een krat). */
 function baseAuto(bg){
-  const t=bg.t,m=5,cs=state.crates.filter(c=>c.L>0&&c.W>0&&!c.pos&&crateValid(c));
+  const t=bg.t,m=5,cs=trunkItems().filter(c=>c.L>0&&c.W>0&&!c.pos&&(c.isStack||crateValid(c)));
   const key=JSON.stringify([bg,cs.map(c=>[c.id,c.L,c.W,c.H])]);
   if(baseAutoCache.has(key))return baseAutoCache.get(key);
   const ar=arrange({L:bg.w,W:bg.h},{comps:cs.map(c=>({w:+c.W+2*m,h:+c.L+2*m,crate:c,label:c.name}))},true);
@@ -926,7 +940,7 @@ function passesOpening(c){
 }
 function renderTrunk(){
   const tr=S().trunk,tg=trunkGeom(),{W,D,H,obst,folded}=tg;
-  const valid=state.crates.filter(c=>c.L>0&&c.W>0);
+  const valid=trunkItems().filter(c=>c.L>0&&c.W>0);
   // Kratten met een vaste plek (gesleept in 3D) staan stil; de rest wordt eromheen geschikt.
   // Met een basis gaan kratten eerst daarin (een plaatdikte hoger), wat niet past komt ernaast op de vloer.
   const bg=baseGeom(tg),bgRect=bg?{x:bg.x,y:bg.y,w:bg.w,h:bg.h}:null;
@@ -968,7 +982,7 @@ function renderTrunk(){
   g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP${+tr.openW>0?` · opening ${fmt(+tr.openW)} × ${fmt(+tr.openH)}`:''}</text>`;
   g+=`<text class="s-sub" x="${-pad*0.35}" y="${D/2}" font-size="${fs*0.8}" text-anchor="middle" transform="rotate(-90 ${-pad*0.35} ${D/2})">${fmt(D)} mm diep</text>`;
   res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,bad=p.bad||(H>0&&+c.H+p.z>H)||!passesOpening(c);
-    g+=`<rect class="s-crate ${bad?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
+    g+=`<rect class="s-crate${c.isStack?' s-stack':''} ${bad?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
     const f=Math.min(fs*1.1,p.w/7,p.h/3.2);
     g+=`<text class="s-txt" x="${p.x+p.w/2}" y="${y+p.h/2-f*0.15}" font-size="${f}" text-anchor="middle">${esc(c.name)}</text>`;
     g+=`<text class="s-sub" x="${p.x+p.w/2}" y="${y+p.h/2+f*0.95}" font-size="${f*0.68}" text-anchor="middle">${fmt(c.L)}×${fmt(c.W)}×${fmt(c.H)}${p.fixed?' · vaste plek':''}</text>`;
@@ -1011,7 +1025,7 @@ function sideView(tg,placed,bg){
   if(H)g+=`<text class="s-sub" x="${D-fs*0.3}" y="${Y(H)-fs*0.4}" font-size="${fs*0.7}" text-anchor="end">hoedenplank ${fmt(H)} mm</text>`;
   if(bg)g+=`<rect class="s-base" x="${D-bg.y-bg.h}" y="${Y(bg.H)}" width="${bg.h}" height="${bg.H}" style="stroke-width:${fs*0.08}"/>`;
   placed.forEach(p=>{const c=p.it.c,x=D-p.y-p.h,z=p.z||0,bad=(H&&+c.H+z>H);
-    g+=`<rect class="s-crate ${bad?'over':''}" x="${x}" y="${Y(+c.H+z)}" width="${p.h}" height="${+c.H}" style="fill-opacity:.75;stroke-width:${fs*0.08}"><title>${esc(c.name)}</title></rect>`});
+    g+=`<rect class="s-crate${c.isStack?' s-stack':''} ${bad?'over':''}" x="${x}" y="${Y(+c.H+z)}" width="${p.h}" height="${+c.H}" style="fill-opacity:.75;stroke-width:${fs*0.08}"><title>${esc(c.name)}</title></rect>`});
   g+=`<text class="s-sub" x="${fs*0.3}" y="${Y(0)+fs*1.1}" font-size="${fs*0.7}">achterbank</text><text class="s-txt" x="${D}" y="${Y(0)+fs*1.1}" font-size="${fs*0.75}" text-anchor="end">ACHTERKLEP</text>`;
   g+=`<text class="s-sub" x="${D/2}" y="${-pad*0.3}" font-size="${fs*0.7}" text-anchor="middle">zijaanzicht · vloer ${fmt(D)} mm diep</text></svg>`;
   return g;
@@ -1097,6 +1111,21 @@ function crateVizHTML(c){
       <dt>Delen</dt><dd>${parts.length}${c.handles?' · 2 grepen':''}</dd></dl>
       <ul class="notes">${notes.map(([k,t])=>`<li class="${k}">${t}</li>`).join('')}</ul>
     </div>`;
+}
+function renderStacks(){
+  const el=$('#stacks');if(!el||!el.tagName)return;
+  const st=state.stacks||[];
+  el.innerHTML=`<div class="card"><div class="crate-head"><h3 style="margin-right:auto">Makita-koffers (MAKPAC)</h3><button data-act="addstack">+ Stapel</button></div>
+    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:12px">
+    ${st.length?st.map(k=>`<div class="stack-row">
+      <input class="crate-name" type="text" id="sn-${k.id}" aria-label="Naam stapel" value="${esc(k.name)}" data-s="stack" data-id="${k.id}" data-k="name" style="width:170px;font-size:18px">
+      <div class="stack-cases">${(k.cases||[]).map((c,i)=>`<span class="case-chip">Type ${c.type} · <input type="number" step="any" id="sh-${k.id}-${i}" aria-label="Hoogte koffer ${i+1}" value="${c.h}" data-s="case" data-id="${k.id}" data-i="${i}" style="width:58px"> mm <button class="ghost" data-act="rmcase" data-id="${k.id}" data-i="${i}" aria-label="Haal koffer weg">×</button></span>`).join('')||'<span class="hint">Nog leeg: voeg koffers toe.</span>'}</div>
+      <span class="hint">+ koffer:</span>${[1,2,3,4].map(n=>`<button data-act="addcase" data-id="${k.id}" data-n="${n}">Type ${n}</button>`).join('')}
+      <span class="num" style="margin-left:auto">${MAKPAC.L} × ${MAKPAC.W} × ${fmt(stackH(k))} mm</span>
+      <button class="ghost" data-act="delstack" data-id="${k.id}">Verwijder</button>
+    </div>`).join(''):'<p class="hint">Heb je Makita MAKPAC-koffers? Maak een stapel, dan wordt hij net als een krat in de kofferbak (en de basis) geplaatst. De koffers zelf komen niet in de snijbestanden.</p>'}
+    ${st.length?'<p class="hint">Grondvlak 396 × 296 mm. Hoogtes: type 1 = 105, type 2 ≈ 157, type 3 ≈ 210, type 4 = 315 mm. Voor type 2 en 3 noemen bronnen een paar mm verschil: meet je eigen koffers na.</p>':''}
+    </div></div>`;
 }
 function renderCrates(){
   const el=$('#crates');
@@ -1220,7 +1249,7 @@ function renderViz(){if(vizQueued)return;vizQueued=true;const run=()=>{if(!vizQu
   const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{render3d()}catch(e){console.error(e)}};
   // frame-timer, met een gewone timer als reserve (die staat stil in verborgen tabbladen)
   requestAnimationFrame(run);setTimeout(run,60)}
-function renderAll(){renderTrunkForm();fill3dSelect();renderCrates();renderTools();renderSettings();renderViz()}
+function renderAll(){renderTrunkForm();fill3dSelect();renderStacks();renderCrates();renderTools();renderSettings();renderViz()}
 
 /* ---------- 3D ---------- */
 let lastTrunk=null,three=null,view3d='trunk',tools3d=true,fit3d=true;
@@ -1339,6 +1368,19 @@ function crateGroup(c,edit){
   }
   return g;
 }
+function stackGroup(st){
+  const g=new THREE.Group(),L=+st.L,W=+st.W,body=mat3(cssVar('--makita')),dark=mat3(cssVar('--makita-dark'));
+  let z=0;
+  (st.cases||[]).forEach(k=>{
+    const h=Math.max(+k.h||0,10),geo=new THREE.BoxGeometry(L-4,W-4,h-3),m=new THREE.Mesh(geo,body);
+    m.position.set(L/2,W/2,z+h/2);g.add(m);
+    const ln=new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:new THREE.Color(cssVar('--ink'))}));ln.position.copy(m.position);g.add(ln);
+    // twee sluitingen aan de voorkant
+    [0.25,0.75].forEach(f=>{const lt=new THREE.Mesh(new THREE.BoxGeometry(40,6,Math.min(30,h*0.4)),dark);lt.position.set(L*f,1,z+h-Math.min(30,h*0.4)/2-4);g.add(lt)});
+    z+=h;
+  });
+  return g;
+}
 function trunkGroup(){
   const g=new THREE.Group();if(!lastTrunk)return g;
   const{res,tg}=lastTrunk,{W,D,H,obst}=tg,top=H||Math.max(400,...state.crates.map(c=>+c.H));
@@ -1359,7 +1401,7 @@ function trunkGroup(){
       if(dv){m.userData={kind:'b'+p.kind,idx:idx[p.kind]++};three.draggables.push(m)}});
     bgp.position.set(bg.x,bg.y,0);g.add(bgp)}
   res.placed.forEach(p=>{
-    const c=p.it.c,cg=crateGroup(c);
+    const c=p.it.c,cg=c.isStack?stackGroup(c):crateGroup(c);
     cg.userData={kind:'crate',crateId:c.id,fx:p.x,fy:p.y,w:p.w,h:p.h,rot:p.rot};
     three.draggables.push(cg);
     if(p.bad||(H&&+c.H+(p.z||0)>H)){const bx=new THREE.Box3().setFromObject(cg),hl=new THREE.Box3Helper(bx,new THREE.Color(cssVar('--bad')));g.add(hl)}
@@ -1419,7 +1461,7 @@ function setup3dDrag(){
     if(!drag)return;three.controls.enabled=true;el.style.cursor='';
     const{u,dx,dy,moved}=drag;drag=null;
     if(u.kind==='crate'){
-      const c=state.crates.find(k=>k.id===u.crateId);
+      const c=itemById(u.crateId);
       if(c&&moved){c.pos={x:Math.round(u.fx+dx),y:Math.round(u.fy+dy),rot:!!u.rot};scheduleSave();renderViz()}
       return;
     }
@@ -1444,7 +1486,7 @@ function setup3dDrag(){
     if(!o){const P=el.__pointAt&&el.__pointAt(e);if(P){const d=P.clone().sub(three.controls.target);three.controls.target.add(d);three.cam.position.add(d);three.controls.update();three.draw()}return}
     const u=o.userData;
     if(u.kind==='crate'){
-      const c=state.crates.find(k=>k.id===u.crateId);if(!c)return;
+      const c=itemById(u.crateId);if(!c)return;
       const w=u.h,h=u.w,[x,y]=snapPos(u.fx+(u.w-w)/2,u.fy+(u.h-h)/2,w,h,u.crateId);
       c.pos={x,y,rot:!u.rot};scheduleSave();renderViz();toast(`${c.name} gedraaid.`);
     }else if(u.kind==='tool'||u.kind==='bin'){
@@ -1550,6 +1592,8 @@ document.addEventListener('input',e=>{
     if(k.startsWith('trunk.')){const tr=S().trunk,f=k.slice(6);if((tr.est||[]).includes(f)){tr.est=tr.est.filter(x=>x!==f);const e2=el.closest('.field')&&el.closest('.field').querySelector('.est');if(e2)e2.remove()}}}
   else if(s==='crate'){const c=state.crates.find(x=>x.id===id);if(c)c[k]=v}
   else if(s==='tool'){const t=state.tools.find(x=>x.id===id);if(t)t[k]=v}
+  else if(s==='stack'){const k2=(state.stacks||[]).find(x=>x.id===id);if(k2)k2[k]=v}
+  else if(s==='case'){const k2=(state.stacks||[]).find(x=>x.id===id),c=k2&&k2.cases[+el.dataset.i];if(c){c.h=v;const lab=el.closest('.stack-row');const sum=lab&&lab.querySelector('.num');if(sum)sum.textContent=`${MAKPAC.L} × ${MAKPAC.W} × ${fmt(stackH(k2))} mm`}}
   scheduleSave();renderViz();
 });
 document.addEventListener('change',e=>{
@@ -1604,13 +1648,17 @@ document.addEventListener('click',async e=>{
   }
   else if(act==='autolayout'&&!id&&view3d==='trunk'){editBase(m=>{m.cross=[];m.subs=[]});if(three)three.selected=null;toast('Schotten uit de basis gehaald.')}
   else if(act==='autolayout'){const c=state.crates.find(x=>x.id===(id||view3d));if(c){delete c.manual;if(three)three.selected=null;scheduleSave();renderViz();toast('Automatisch ingedeeld.')}}
-  else if(act==='autopos'){state.crates.forEach(c=>{delete c.pos});renderViz();scheduleSave();toast('Alle kratten automatisch geschikt.')}
+  else if(act==='autopos'){trunkItems().forEach(c=>{delete c.pos});renderViz();scheduleSave();toast('Alle kratten automatisch geschikt.')}
   else if(act==='swap'){const c=state.crates.find(x=>x.id===id);if(!c)return;[c.L,c.W]=[c.W,c.L];delete c.manual;renderAll();scheduleSave()}
   else if(act==='fit'){const c=state.crates.find(x=>x.id===id);if(!c)return;
     if(!toolItems(crateTools(c)).length){toast('Wijs eerst gereedschap toe aan deze krat.');return}
     if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden.')}
   else if(act==='addtool'){const t={id:uid(),name:'',cat:CATS[0],l:0,w:0,h:0,qty:1,crate:state.crates.length===1?state.crates[0].id:''};state.tools.push(t);renderTools();renderViz();scheduleSave();
     const el=document.getElementById('tn-'+t.id);if(el)el.focus()}
+  else if(act==='addstack'){state.stacks=state.stacks||[];const n=state.stacks.length+1;state.stacks.push({id:uid(),name:'Makita-stapel '+n,L:MAKPAC.L,W:MAKPAC.W,cases:[{type:3,h:MAKPAC.types[3]},{type:1,h:MAKPAC.types[1]}]});renderStacks();renderViz();scheduleSave()}
+  else if(act==='addcase'){const k2=state.stacks.find(x=>x.id===id),n=+b.dataset.n;if(k2){k2.cases.push({type:n,h:MAKPAC.types[n]});renderStacks();renderViz();scheduleSave()}}
+  else if(act==='rmcase'){const k2=state.stacks.find(x=>x.id===id);if(k2){k2.cases.splice(+b.dataset.i,1);renderStacks();renderViz();scheduleSave()}}
+  else if(act==='delstack'){state.stacks=state.stacks.filter(x=>x.id!==id);renderStacks();renderViz();scheduleSave()}
   else if(act==='duptool'){
     const i=state.tools.findIndex(t=>t.id===id);if(i<0)return;
     const copy=Object.assign(clone(state.tools[i]),{id:uid(),name:(state.tools[i].name||'Gereedschap')+' (kopie)'});
