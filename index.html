@@ -114,7 +114,8 @@ dl.specs dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;t
 
 /* tools table */
 .table-wrap{overflow-x:auto}
-table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+table{border-collapse:collapse;width:100%;min-width:980px;font-size:14px}
+td input.grp{width:120px;min-width:0}
 th{font-family:var(--display);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:13px;color:var(--muted);text-align:left;padding:8px 6px;border-bottom:1px solid var(--line-strong);white-space:nowrap}
 th.r{text-align:right}
 td{padding:5px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -156,6 +157,12 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 .s-sheet{fill:var(--sheet);stroke:var(--line-strong)}
 .s-part{fill:var(--ply);stroke:var(--cut);fill-rule:evenodd}
 .s-label{fill:var(--engrave);font-family:Arial,sans-serif}
+.s-div{fill:var(--ply-edge)}
+.s-bin{fill:var(--ply);stroke:var(--ply-edge);stroke-width:1}
+.s-bin-in{fill:var(--bg)}
+.s-comp{fill:none;stroke:var(--line-strong);stroke-width:1;stroke-dasharray:4 4}
+.sheet-group{display:flex;flex-direction:column}
+.sheet-group h3{padding:14px 16px 0}
 @media (prefers-reduced-motion:no-preference){button{transition:filter .15s,border-color .15s}}
 </style>
 
@@ -198,10 +205,11 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
   </section>
 
   <section id="gereedschap">
-    <div class="sec-head"><h2>Gereedschap</h2><p>L × B is het grondvlak zoals het in de krat staat, H is de hoogte. Gereedschap mag in de krat een kwartslag draaien.</p></div>
+    <div class="sec-head"><h2>Gereedschap</h2><p>L × B is het grondvlak zoals het in de krat staat, H is de hoogte. Gereedschap met dezelfde groepsnaam deelt één vak. Vak: <b>schot</b> = vast vak met tussenschotten, <b>bak</b> = losse bak.</p></div>
     <div class="card">
+      <datalist id="groupList"></datalist>
       <div class="table-wrap"><table>
-        <thead><tr><th>Naam</th><th>Soort</th><th class="r">L</th><th class="r">B</th><th class="r">H</th><th class="r">Aantal</th><th>Krat</th><th></th></tr></thead>
+        <thead><tr><th>Naam</th><th>Soort</th><th class="r">L</th><th class="r">B</th><th class="r">H</th><th class="r">Aantal</th><th>Krat</th><th>Groep</th><th>Vak</th><th></th></tr></thead>
         <tbody id="tools"></tbody>
       </table></div>
       <div class="tfoot"><button class="primary" data-act="addtool">+ Gereedschap</button><span id="toolsFoot"></span></div>
@@ -226,12 +234,15 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 (function(){
 "use strict";
 const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires','Handgereedschap','Overig'];
+const BAK_CATS=['Accu & lader','Accessoires','Handgereedschap'];
 const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
+  binT:6,binFinger:20,dividerH:0,
   laserBed:[813,508],cncSheet:[2440,1220],trunk:{w:1000,d:850,h:450}};
 const DENSITY=680; // kg/m³ berken multiplex
+const BIN_GAP=3;   // speling rond losse bakken
 let state={v:1,settings:clone(DEF),crates:[],tools:[]};
 let excluded=new Set();
-let db=null, docRef=null, dl=null, lastSaved='', saveTimer=null, writeChain=Promise.resolve(), pendingRemote=null, storeMode='';
+let db=null, docRef=null, dl=null, lastSaved='', saveTimer=null, writeChain=Promise.resolve(), pendingRemote=null;
 const $=s=>document.querySelector(s);
 const LOCAL=!(window.claude&&typeof window.claude.use==='function');
 function saveFile(name,text,type){
@@ -243,7 +254,6 @@ function saveFile(name,text,type){
 function clone(o){return JSON.parse(JSON.stringify(o))}
 function uid(){return Math.random().toString(36).slice(2,9)}
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function r1(n){return Math.round(n*10)/10}
 function fmt(n,d=0){return Number(n).toLocaleString('nl-NL',{minimumFractionDigits:d,maximumFractionDigits:d})}
 function S(){return state.settings}
 function normalize(d){
@@ -251,6 +261,8 @@ function normalize(d){
   s.trunk=Object.assign(clone(DEF.trunk),d&&d.settings&&d.settings.trunk||{});
   return {v:1,settings:s,crates:Array.isArray(d&&d.crates)?d.crates:[],tools:Array.isArray(d&&d.tools)?d.tools:[]};
 }
+function vakOf(t){return t.vak||(BAK_CATS.includes(t.cat)?'bak':'schot')}
+function layoutOn(c){return c.layout!=='vrij'}
 
 /* ---------- opslag ---------- */
 function setSave(mode,text){const el=$('#save');el.className='save '+mode;el.querySelector('span').textContent=text}
@@ -284,14 +296,13 @@ async function initStore(){
     try{db=await c.use('db')}catch(e){db=null}
     try{dl=await c.use('downloads')}catch(e){dl=null}
   }
-  if(dl)renderSheets();
-  if(!db){storeMode='local';setSave('local','Opgeslagen in deze browser');renderAll();return}
+  if(dl)renderViz();
+  if(!db){setSave('local','Opgeslagen in deze browser');renderAll();return}
   docRef=db.doc('state/main');
   setSave('ok','Verbonden');
   docRef.onSnapshot(snap=>{
     if(snap.metadata&&snap.metadata.hasPendingWrites)return;
     if(!snap.exists){
-      // Nog niets opgeslagen: neem lokale gegevens mee als die er zijn.
       if(cached&&(cached.tools||[]).length+(cached.crates||[]).length){scheduleSave()}
       setSave('ok','Gekoppeld, nog leeg');return;
     }
@@ -319,34 +330,156 @@ function packBin(items,W,H,gap,portrait){
   }
   return{placed,left};
 }
-function toolItems(crateId){
-  const out=[];
-  state.tools.filter(t=>t.crate===crateId).forEach(t=>{const q=Math.max(1,Math.round(+t.qty||1));
-    for(let i=0;i<q;i++)out.push({w:+t.l||0,h:+t.w||0,H:+t.h||0,tool:t})});
-  return out.filter(i=>i.w>0&&i.h>0);
+/* kleinste rechthoek waarin items passen, met breedte (w) hoogstens maxW */
+function minRect(items,gap,maxW){
+  if(!items.length)return null;
+  const wmin=Math.max(...items.map(i=>Math.min(i.w,i.h)));
+  if(wmin>maxW+1e-6)return null;
+  const wmax=Math.max(wmin,Math.min(maxW,items.reduce((a,i)=>a+Math.max(i.w,i.h),0)+gap*(items.length-1)));
+  const step=Math.max(2,(wmax-wmin)/120);
+  let best=null;
+  for(let W=wmin;W<=wmax+step-1e-9;W+=step){
+    const Wc=Math.min(W,wmax),r=packBin(items,Wc,1e7,gap);if(r.left.length)continue;
+    // kleinste oppervlakte, maar lange smalle stroken tellen zwaarder: die passen slecht in een krat
+    const w=Math.max(...r.placed.map(p=>p.x+p.w)),h=Math.max(...r.placed.map(p=>p.y+p.h));
+    const a=w*h*(1+0.25*(Math.max(w,h)/Math.min(w,h)-1));
+    if(!best||a<best.a-1e-6)best={w,h,a};
+  }
+  return best;
 }
+/* items in een rechthoek (krat-coördinaten X langs lengte, Y langs breedte) zetten; beide richtingen proberen */
+function fillRect(items,X0,Y0,SX,SY,m,gap){
+  const a=packBin(items,SY-2*m,SX-2*m,gap);
+  const toA=p=>({X:X0+m+p.y,Y:Y0+m+p.x,SX:p.h,SY:p.w,it:p.it});
+  if(!a.left.length)return{placed:a.placed.map(toA),left:[]};
+  const b=packBin(items,SX-2*m,SY-2*m,gap);
+  if(b.left.length<a.left.length)return{placed:b.placed.map(p=>({X:X0+m+p.x,Y:Y0+m+p.y,SX:p.w,SY:p.h,it:p.it})),left:b.left};
+  return{placed:a.placed.map(toA),left:a.left};
+}
+function toolItems(list){
+  const out=[];
+  list.forEach(t=>{const q=Math.max(1,Math.round(+t.qty||1));
+    for(let i=0;i<q;i++)if(+t.l>0&&+t.w>0)out.push({w:+t.l,h:+t.w,H:+t.h||0,tool:t})});
+  return out;
+}
+function crateTools(c){return state.tools.filter(t=>t.crate===c.id)}
 function crateInner(c){const t=S().t;return{L:c.L-2*t,W:c.W-2*t,H:c.H-t}}
-function packTools(c,items){
-  const s=S(),inn=crateInner(c),cl=s.clearance;
-  return packBin(items,inn.L-cl,inn.W-cl,cl);
+
+/* ---------- indeling met vakken ---------- */
+function buildComps(c){
+  const s=S(),t=+s.t,cl=+s.clearance,bt=+s.binT||6;
+  const Wi=c.W-2*t,Hi=c.H-t;
+  const groups=new Map();
+  crateTools(c).forEach(tl=>{
+    const g0=(tl.group||'').trim(),key=g0?'g:'+g0.toLowerCase():'t:'+tl.id;
+    if(!groups.has(key))groups.set(key,{label:g0||tl.name||'Gereedschap',mode:vakOf(tl),tools:[]});
+    groups.get(key).tools.push(tl);
+  });
+  const comps=[],notes=[],bins=[];
+  for(const g of groups.values()){
+    const items=toolItems(g.tools);if(!items.length)continue;
+    const Hmax=Math.max(...items.map(i=>i.H));
+    if(g.mode==='bak'){
+      const r=minRect(items,cl,Wi-2*BIN_GAP-2*bt-cl);
+      if(!r){notes.push(['bad',`${esc(g.label)} is te groot voor een losse bak in deze krat.`]);continue}
+      const b={label:g.label,items,w:Math.max(Math.ceil(r.w+cl+2*bt),4*bt+30),h:Math.max(Math.ceil(r.h+cl+2*bt),4*bt+30),
+        H:Math.max(3*bt+20,Math.ceil((Hmax+bt+5)/5)*5)};
+      if(b.H>Hi)notes.push(['warn',`Bak ${esc(g.label)} (${b.H} mm) is hoger dan de krat van binnen.`]);
+      bins.push(b);
+    }else{
+      const r=minRect(items,cl,Wi-cl);
+      if(!r){notes.push(['bad',`${esc(g.label)} is te breed voor deze krat.`]);continue}
+      if(Hmax>Hi)notes.push(['warn',`${esc(g.label)} steekt ${fmt(Hmax-Hi)} mm boven de rand uit.`]);
+      comps.push({kind:'schot',label:g.label,items,w:r.w+cl,h:r.h+cl,Hmax});
+    }
+  }
+  if(bins.length){
+    const r=minRect(bins.map(b=>({w:b.w,h:b.h,bin:b})),BIN_GAP,Wi-2*BIN_GAP);
+    if(r)comps.push({kind:'bak',label:'Bakken',bins,w:r.w+2*BIN_GAP,h:r.h+2*BIN_GAP,Hmax:Math.max(...bins.map(b=>b.H))});
+    else notes.push(['bad','De losse bakken passen niet in de breedte van deze krat.']);
+  }
+  return{comps,notes};
+}
+/* vakken in stroken: dwarsschotten tussen stroken, tussenschotten binnen een strook */
+function arrange(c,built){
+  const t=+S().t,Li=c.L-2*t,Wi=c.W-2*t;
+  const items=built.comps.map(cp=>({w:cp.w,h:cp.h,cp}));
+  const len=r=>r.placed.reduce((m,p)=>Math.max(m,p.y+p.h),0);
+  const tries=[packBin(items,Wi,Li,t,false),packBin(items,Wi,Li,t,true)];
+  const res=tries.sort((a,b)=>a.left.length-b.left.length||len(a)-len(b))[0];
+  const ys=[...new Set(res.placed.map(p=>p.y))].sort((a,b)=>a-b);
+  const shelves=ys.map(y=>{const its=res.placed.filter(p=>p.y===y).sort((a,b)=>a.x-b.x);return{y,h:Math.max(...its.map(p=>p.h)),its}});
+  const cross=[],subs=[];
+  shelves.forEach((sh,i)=>{
+    const last=i===shelves.length-1;
+    sh.x0=t+sh.y;sh.x1=last?c.L-t:t+sh.y+sh.h;
+    if(!last)cross.push({x:sh.x1});
+    sh.its.forEach((p,k)=>{if(k<sh.its.length-1)subs.push({y:t+p.x+p.w,xs:sh.x0,xe:sh.x1,bay:i,startWall:i===0?'L':'cross',endWall:last?'R':'cross'})});
+  });
+  const comps=res.placed.map(p=>Object.assign({},p.it.cp,{X:t+p.y,Y:t+p.x,SX:p.h,SY:p.w}));
+  return{cross,subs,comps,left:res.left.map(i=>i.cp)};
+}
+const layoutCache=new Map();
+function crateLayout(c){
+  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,s,crateTools(c)]);
+  if(layoutCache.has(key))return layoutCache.get(key);
+  const t=+s.t,cl=+s.clearance,bt=+s.binT||6,Hi=c.H-t;
+  const built=buildComps(c),ar=arrange(c,built);
+  ar.Hd=(+s.dividerH>0)?Math.min(+s.dividerH,Hi):Hi;
+  ar.notes=built.notes.slice();
+  ar.comps.forEach(cp=>{
+    if(cp.kind==='schot'){const f=fillRect(cp.items,cp.X,cp.Y,cp.SX,cp.SY,cl/2,cl);cp.tools=f.placed}
+    else{
+      const f=fillRect(cp.bins.map(b=>({w:b.w,h:b.h,bin:b})),cp.X,cp.Y,cp.SX,cp.SY,BIN_GAP,BIN_GAP);
+      cp.binsPlaced=f.placed.map(r=>{const b=r.it.bin,o={label:b.label,X:r.X,Y:r.Y,L:r.SX,W:r.SY,H:b.H};
+        o.tools=fillRect(b.items,r.X+bt,r.Y+bt,r.SX-2*bt,r.SY-2*bt,cl/2,cl).placed;return o});
+    }
+  });
+  if(ar.left.length)ar.notes.unshift(['bad',`Past niet: ${ar.left.map(cp=>esc(cp.label)).join(', ')}. Maak de krat groter of klik op Maat op inhoud.`]);
+  if(layoutCache.size>200)layoutCache.clear();
+  layoutCache.set(key,ar);
+  return ar;
 }
 function fitCrate(c){
-  const s=S(),items=toolItems(c.id);if(!items.length)return false;
-  const t=s.t,cl=s.clearance;
-  const minW=Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+2*cl;
-  let W=Math.max(c.W,Math.ceil(minW/5)*5);
-  const start=Math.ceil((Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+2*cl)/5)*5;
-  let found=null;
-  for(let L=start;L<=3000;L+=5){if(!packTools({L,W,H:c.H},items).left.length){found=L;break}}
-  if(found==null)return false;
-  c.L=found;c.W=W;
-  c.H=Math.ceil((Math.max(...items.map(i=>i.H))+cl+t)/5)*5;
+  const s=S(),t=+s.t,cl=+s.clearance;
+  if(!layoutOn(c)){
+    const items=toolItems(crateTools(c));if(!items.length)return false;
+    const minW=Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+2*cl;
+    const W=Math.max(c.W,Math.ceil(minW/5)*5);
+    for(let L=Math.ceil(minW/5)*5;L<=3000;L+=5){
+      if(!packBin(items,L-2*t-cl,W-2*t-cl,cl).left.length){c.L=L;c.W=W;c.H=Math.ceil((Math.max(...items.map(i=>i.H))+cl+t)/5)*5;return true}
+    }
+    return false;
+  }
+  // Probeer breedtes vanaf de huidige; voorkeur voor een maat waarbij alle panelen op de plaat passen, dan de kleinste vloer.
+  const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
+  let best=null,atW=null;
+  for(let W=+c.W;W<=+c.W+1000;W+=10){
+    const tmp=Object.assign({},c,{W,H:5000});
+    const built=buildComps(tmp);
+    if(built.notes.some(n=>n[0]==='bad')||!built.comps.length)continue;
+    const H=Math.max(3*t+20,Math.ceil((Math.max(...built.comps.map(cp=>cp.Hmax))+cl+t)/5)*5);
+    const start=Math.ceil((2*t+Math.min(...built.comps.map(cp=>Math.min(cp.w,cp.h))))/5)*5;
+    for(let L=start;L<=3000;L+=5){
+      tmp.L=L;
+      if(arrange(tmp,built).left.length)continue;
+      const cand={L,W,H,area:L*W};
+      if(W===+c.W)atW=cand;
+      if(onSheet(L,H)&&onSheet(W,H)&&onSheet(L,W)&&(!best||cand.area<best.area-1))best=cand;
+      break;
+    }
+  }
+  // Past niets op de plaat, houd dan de huidige breedte aan
+  best=best||atW;
+  if(!best)return false;
+  c.L=best.L;c.W=best.W;c.H=best.H;
   return true;
+  return false;
 }
 
 /* ---------- vingerverbindingen ---------- */
-function segs(len,pre,preD,post,postD,ev,od){
-  const fw=Math.max(3*S().t*0+8,S().finger),out=[];
+function segs(len,pre,preD,post,postD,ev,od,fw){
+  const out=[];
   if(pre>0)out.push([0,pre,preD]);
   const m=len-pre-post;let n=Math.round(m/fw);
   if(n%2===0)n=(m/fw>n)?n+1:n-1;
@@ -356,19 +489,78 @@ function segs(len,pre,preD,post,postD,ev,od){
   if(post>0)out.push([len-post,len,postD]);
   return out;
 }
-function cratePanels(c){
-  const t=S().t,L=+c.L,W=+c.W,H=+c.H;
-  const vF=segs(H,t,0,0,0,0,t), vS=segs(H,t,t,0,0,t,0);
-  const front=()=>({w:L,h:H,edges:[segs(L,t,0,t,0,t,0),vF,[[0,L,0]],vF]});
-  const side=()=>({w:W,h:H,edges:[segs(W,t,t,t,t,t,0),vS,[[0,W,0]],vS],handle:!!c.handles});
-  const bx=segs(L,t,t,t,t,0,t), by=segs(W,t,t,t,t,0,t);
+function boxPanels(L,W,H,t,fw,handles){
+  const vF=segs(H,t,0,0,0,0,t,fw), vS=segs(H,t,t,0,0,t,0,fw);
+  const fe=[segs(L,t,0,t,0,t,0,fw),vF,[[0,L,0]],vF], se=[segs(W,t,t,t,t,t,0,fw),vS,[[0,W,0]],vS];
+  const bx=segs(L,t,t,t,t,0,t,fw), by=segs(W,t,t,t,t,0,t,fw);
   return[
-    Object.assign(front(),{name:'voorkant'}),Object.assign(front(),{name:'achterkant'}),
-    Object.assign(side(),{name:'zijkant L'}),Object.assign(side(),{name:'zijkant R'}),
-    {name:'bodem',w:L,h:W,edges:[bx,by,bx,by]}
+    {name:'voorkant',kind:'front',w:L,h:H,edges:fe,t},{name:'achterkant',kind:'back',w:L,h:H,edges:fe,t},
+    {name:'zijkant L',kind:'left',w:W,h:H,edges:se,handle:handles,t},{name:'zijkant R',kind:'right',w:W,h:H,edges:se,handle:handles,t},
+    {name:'bodem',kind:'bottom',w:L,h:W,edges:[bx,by,bx,by],t}
   ];
 }
+/* schot: lijf len × Hd, lipjes van t naar onder en aan de uiteinden; verschoven zodat alles ≥ 0 */
+function tabbedRect(len,Hd,t,bottom,right,left){
+  const p=[[0,0]];
+  bottom.forEach(([a,b])=>p.push([a,0],[a,-t],[b,-t],[b,0]));
+  p.push([len,0]);
+  right.forEach(([a,b])=>p.push([len,a],[len+t,a],[len+t,b],[len,b]));
+  p.push([len,Hd],[0,Hd]);
+  left.slice().reverse().forEach(([a,b])=>p.push([0,b],[-t,b],[-t,a],[0,a]));
+  return clean(p.map(([x,y])=>[x+t,y+t]));
+}
+function handleBox(p,s){
+  const hw=Math.min(+s.handleW||110,p.w-4*s.t-40),hh=+s.handleH||32;
+  if(!p.handle||p.h<hh+60||hw<60)return null;
+  return{cx:p.w/2,cy:p.h-25-hh/2,w:hw,h:hh};
+}
+function dividerPanels(c,lay){
+  const s=S(),t=+s.t,Wi=c.W-2*t,Hd=lay.Hd;
+  const wallBands=(Hd<80?[[0.3,0.7]]:[[0.2,0.4],[0.6,0.8]]).map(([a,b])=>[a*Hd,b*Hd]);
+  const A=[0.55*Hd,0.8*Hd],B=[0.2*Hd,0.45*Hd];
+  const btabs=len=>{const n=len<120?1:len<400?2:3,tl=Math.min(50,len/(2*n+1));
+    return Array.from({length:n},(_,k)=>{const cc=len*(k+1)/(n+1);return[cc-tl/2,cc+tl/2]})};
+  const hb=handleBox({w:+c.W,h:+c.H,handle:!!c.handles},s);
+  const hits=(y,band)=>hb&&y+t>hb.cx-hb.w/2-5&&y<hb.cx+hb.w/2+5&&t+band[1]>hb.cy-hb.h/2-5&&t+band[0]<hb.cy+hb.h/2+5;
+  const holes={front:[],back:[],left:[],right:[],bottom:[]},panels=[];
+  lay.cross.forEach((cd,i)=>{
+    const bt=btabs(Wi);
+    const p={name:'dwarsschot '+(i+1),kind:'cross',w:Wi+2*t,h:Hd+t,t,pts:tabbedRect(Wi,Hd,t,bt,wallBands,wallBands),holes:[]};
+    cd.panel=p;panels.push(p);
+    wallBands.forEach(([a,b])=>{holes.front.push([cd.x,t+a,cd.x+t,t+b]);holes.back.push([cd.x,t+a,cd.x+t,t+b])});
+    bt.forEach(([a,b])=>holes.bottom.push([cd.x,t+a,cd.x+t,t+b]));
+  });
+  lay.subs.forEach((sd,j)=>{
+    const len=sd.xe-sd.xs,bt=btabs(len);
+    const pick=(order,wall)=>{for(const b of order){if(wall!=='cross'&&hits(sd.y,b))continue;return b}return null};
+    const st=pick([A,B],sd.startWall),en=pick([B,A],sd.endWall);
+    const p={name:'tussenschot '+(j+1),kind:'sub',w:len+2*t,h:Hd+t,t,pts:tabbedRect(len,Hd,t,bt,en?[en]:[],st?[st]:[]),holes:[]};
+    panels.push(p);
+    bt.forEach(([a,b])=>holes.bottom.push([sd.xs+a,sd.y,sd.xs+b,sd.y+t]));
+    if(st){const h=[sd.y,t+st[0],sd.y+t,t+st[1]];if(sd.startWall==='L')holes.left.push(h);else lay.cross[sd.bay-1].panel.holes.push(h)}
+    if(en){const h=[sd.y,t+en[0],sd.y+t,t+en[1]];if(sd.endWall==='R')holes.right.push(h);else lay.cross[sd.bay].panel.holes.push(h)}
+  });
+  return{panels,holes};
+}
+function cratePanels(c){
+  const s=S(),ps=boxPanels(+c.L,+c.W,+c.H,+s.t,+s.finger,!!c.handles);
+  if(layoutOn(c)){
+    const lay=crateLayout(c),dv=dividerPanels(c,lay);
+    ps.forEach(p=>{p.holes=dv.holes[p.kind]||[]});
+    ps.push(...dv.panels);
+  }
+  return ps;
+}
+function binPanels(c){
+  if(!layoutOn(c))return[];
+  const s=S(),bt=+s.binT||6,out=[],lay=crateLayout(c);
+  lay.comps.filter(cp=>cp.kind==='bak').forEach(cp=>cp.binsPlaced.forEach(b=>{
+    boxPanels(b.L,b.W,b.H,bt,+s.binFinger||20,false).forEach(p=>{p.name='bak '+b.label+' · '+p.name;out.push(p)});
+  }));
+  return out;
+}
 function outline(p){
+  if(p.pts)return p.pts;
   const{w,h,edges}=p,rev=(sg,len)=>sg.map(([a,b,d])=>[len-b,len-a,d]).reverse();
   const E=[{O:[0,0],u:[1,0],n:[0,1],len:w,s:edges[0]},{O:[w,0],u:[0,1],n:[-1,0],len:h,s:edges[1]},
     {O:[w,h],u:[-1,0],n:[0,-1],len:w,s:rev(edges[2],w)},{O:[0,h],u:[0,-1],n:[1,0],len:h,s:rev(edges[3],h)}];
@@ -413,47 +605,64 @@ function polyPath(pts,r){
   }
   return d+'Z';
 }
+function rrect(x0,y0,x1,y1,r){
+  r=Math.min(r,(x1-x0)/2,(y1-y0)/2);
+  if(r<=0)return`M${f2(x0)} ${f2(y0)}H${f2(x1)}V${f2(y1)}H${f2(x0)}Z`;
+  return`M${f2(x0+r)} ${f2(y0)}H${f2(x1-r)}A${f2(r)} ${f2(r)} 0 0 1 ${f2(x1)} ${f2(y0+r)}V${f2(y1-r)}A${f2(r)} ${f2(r)} 0 0 1 ${f2(x1-r)} ${f2(y1)}H${f2(x0+r)}A${f2(r)} ${f2(r)} 0 0 1 ${f2(x0)} ${f2(y1-r)}V${f2(y0+r)}A${f2(r)} ${f2(r)} 0 0 1 ${f2(x0+r)} ${f2(y0)}Z`;
+}
 function panelGeom(p){
   const s=S(),laser=s.machine==='laser',k=laser?Math.max(0,+s.kerf||0)/2:0,r=laser?0:Math.max(0,+s.bit||0)/2;
   let pts=outline(p);if(k)pts=offsetPoly(pts,k);
-  const W=p.w+2*k,H=p.h+2*k;
-  pts=pts.map(([x,y])=>[x+k,H-(y+k)]);
-  let d=polyPath(pts,r),hasHandle=false;
-  const hw=Math.min(+s.handleW||110,p.w-4*s.t-40),hh=+s.handleH||32;
-  if(p.handle&&p.h>=hh+60&&hw>=60){
-    hasHandle=true;
-    const w2=hw-2*k,h2=hh-2*k,rr=h2/2,cx=W/2,cy=k+25+hh/2;
+  const W=p.w+2*k,H=p.h+2*k,Y=y=>H-(y+k);
+  let d=polyPath(pts.map(([x,y])=>[x+k,Y(y)]),r);
+  (p.holes||[]).forEach(([u0,v0,u1,v1])=>{
+    // laser: gat krimpt met halve kerf; CNC: gat verlengd met de freesstraal zodat het lipje tot in de hoeken past
+    if(laser){u0+=k;v0+=k;u1-=k;v1-=k;d+=rrect(u0+k,Y(v1),u1+k,Y(v0),0)}
+    else if(u1-u0<v1-v0){d+=rrect(u0,Y(v1+r),u1,Y(v0-r),r)}
+    else{d+=rrect(u0-r,Y(v1),u1+r,Y(v0),r)}
+  });
+  const hb=handleBox(p,s);
+  if(hb){
+    const w2=hb.w-2*k,h2=hb.h-2*k,rr=h2/2,cx=hb.cx+k,cy=Y(hb.cy);
     d+=`M${f2(cx-w2/2+rr)} ${f2(cy-rr)}H${f2(cx+w2/2-rr)}A${f2(rr)} ${f2(rr)} 0 0 1 ${f2(cx+w2/2-rr)} ${f2(cy+rr)}H${f2(cx-w2/2+rr)}A${f2(rr)} ${f2(rr)} 0 0 1 ${f2(cx-w2/2+rr)} ${f2(cy-rr)}Z`;
   }
-  return{d,w:W,h:H,name:p.name,hasHandle};
+  return{d,w:W,h:H,name:p.name,hasHandle:!!hb};
 }
 function crateValid(c){const t=S().t;return c.L>=4*t+30&&c.W>=4*t+30&&c.H>=3*t+20}
 
-/* ---------- nesten ---------- */
+/* ---------- nesten, per plaatdikte ---------- */
 function sheetSize(){const s=S();return s.machine==='laser'?s.laserBed.map(Number):s.cncSheet.map(Number)}
 function nestAll(){
   const s=S(),[SW,SH]=sheetSize(),m=5,gap=s.machine==='cnc'?Math.max(+s.gap||6,(+s.bit||6)+4):(+s.gap||6);
   const parts=[];
-  state.crates.filter(c=>!excluded.has(c.id)&&crateValid(c)).forEach(c=>cratePanels(c).forEach(p=>{const g=panelGeom(p);parts.push({w:g.w,h:g.h,g,crate:c})}));
+  state.crates.filter(c=>!excluded.has(c.id)&&crateValid(c)).forEach(c=>
+    cratePanels(c).concat(binPanels(c)).forEach(p=>{const g=panelGeom(p);parts.push({w:g.w,h:g.h,g,crate:c,t:p.t,area:p.w*p.h})}));
   const fits=p=>(p.w<=SW-2*m&&p.h<=SH-2*m)||(p.h<=SW-2*m&&p.w<=SH-2*m);
-  const over=parts.filter(p=>!fits(p));let rest=parts.filter(fits);const sheets=[];
   const filled=r=>r.placed.reduce((a,p)=>a+p.w*p.h,0);
-  while(rest.length&&sheets.length<60){const r1=packBin(rest,SW-2*m,SH-2*m,gap,false),r2=packBin(rest,SW-2*m,SH-2*m,gap,true);
-    const r=filled(r2)>filled(r1)?r2:r1;if(!r.placed.length)break;
-    sheets.push(r.placed.map(pl=>Object.assign(pl,{x:pl.x+m,y:pl.y+m})));rest=r.left}
-  return{sheets,over,SW,SH,parts};
+  const thick=[...new Set(parts.map(p=>p.t))].sort((a,b)=>b-a);
+  const groups=thick.map(t=>{
+    const mine=parts.filter(p=>p.t===t),over=mine.filter(p=>!fits(p));let rest=mine.filter(fits);const sheets=[];
+    while(rest.length&&sheets.length<60){
+      const r1=packBin(rest,SW-2*m,SH-2*m,gap,false),r2=packBin(rest,SW-2*m,SH-2*m,gap,true),r=filled(r2)>filled(r1)?r2:r1;
+      if(!r.placed.length)break;
+      sheets.push(r.placed.map(pl=>Object.assign(pl,{x:pl.x+m,y:pl.y+m})));rest=r.left;
+    }
+    return{t,sheets,over};
+  });
+  return{groups,SW,SH,parts};
 }
 function partSVG(pl,preview){
   const p=pl.it,g=p.g,s=S();
   const tr=pl.rot?`translate(${f2(pl.x+g.h)} ${f2(pl.y)}) rotate(90)`:`translate(${f2(pl.x)} ${f2(pl.y)})`;
-  const fs=Math.max(5,Math.min(10,g.h/5,g.w/14));
+  const fs=Math.max(4,Math.min(10,g.h/5,g.w/16));
   const ly=g.hasHandle?g.h*0.62:g.h/2;
   const label=s.labels?`<text x="${f2(g.w/2)}" y="${f2(ly)}" font-size="${f2(fs)}" text-anchor="middle" dominant-baseline="middle" ${preview?'class="s-label"':'fill="#0000ff" font-family="Arial, sans-serif"'}>${esc(p.crate.name)} · ${esc(g.name)}</text>`:'';
   const path=preview?`<path class="s-part" d="${g.d}"/>`:`<path d="${g.d}" fill="none" stroke="#ff0000" stroke-width="0.01"/>`;
   return`<g transform="${tr}">${path}${label}</g>`;
 }
-function sheetFile(sheet,SW,SH){
-  return`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${SW}mm" height="${SH}mm" viewBox="0 0 ${SW} ${SH}">\n<!-- Kofferbakkratten · ${S().machine==='laser'?'laser, kerfcompensatie '+S().kerf+' mm':'CNC, dogbones Ø'+S().bit+' mm'} · plaat ${S().t} mm · rood = snijden, blauw = graveren -->\n${sheet.map(pl=>partSVG(pl,false)).join('\n')}\n</svg>\n`;
+function sheetFile(sheet,SW,SH,t){
+  const s=S();
+  return`<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${SW}mm" height="${SH}mm" viewBox="0 0 ${SW} ${SH}">\n<!-- Kofferbakkratten · ${s.machine==='laser'?'laser, kerfcompensatie '+s.kerf+' mm':'CNC, dogbones Ø'+s.bit+' mm'} · plaat ${t} mm · rood = snijden, blauw = graveren -->\n${sheet.map(pl=>partSVG(pl,false)).join('\n')}\n</svg>\n`;
 }
 
 /* ---------- tekenen ---------- */
@@ -461,19 +670,20 @@ function catColor(cat){const i=Math.max(0,CATS.indexOf(cat));return`var(--c${i})
 function renderChips(nest,trunkRes){
   const nTools=state.tools.reduce((a,t)=>a+Math.max(1,Math.round(+t.qty||1)),0);
   const unass=state.tools.filter(t=>!t.crate||!state.crates.some(c=>c.id===t.crate)).length;
-  const woodM2=state.crates.filter(crateValid).reduce((a,c)=>a+(2*c.L*c.H+2*c.W*c.H+c.L*c.W)/1e6,0);
-  const kg=woodM2*S().t/1000*DENSITY;
+  const woodM2=nest.parts.reduce((a,p)=>a+p.area/1e6,0);
+  const kg=nest.parts.reduce((a,p)=>a+p.area/1e6*p.t/1000*DENSITY,0);
   const tooTall=state.crates.filter(c=>+c.H>+S().trunk.h).length;
   const fitTxt=!state.crates.length?'–':(trunkRes.left.length||tooTall)?'Nee':'Ja';
   const fitCls=!state.crates.length?'':(trunkRes.left.length||tooTall)?'bad':'ok';
   const fitSub=!state.crates.length?'nog geen kratten':trunkRes.left.length?`${trunkRes.left.length} krat(ten) passen niet`:tooTall?`${tooTall} krat(ten) te hoog`:`${fmt(trunkRes.usedPct)}% vloer bezet`;
-  const[SW,SH]=nest?[nest.SW,nest.SH]:sheetSize();
+  const nSheets=nest.groups.reduce((a,g)=>a+g.sheets.length,0);
+  const perT=nest.groups.map(g=>`${g.sheets.length}× ${fmt(g.t,1)} mm`).join(' · ')||`${nest.SW} × ${nest.SH} mm`;
   $('#chips').innerHTML=[
     `<div class="chip"><b>${nTools}</b><span>stuks gereedschap</span></div>`,
     `<div class="chip ${unass?'warn':''}"><b>${unass}</b><span>nog niet ingedeeld</span></div>`,
     `<div class="chip"><b>${state.crates.length}</b><span>kratten</span></div>`,
     `<div class="chip ${fitCls}"><b>${fitTxt}</b><span>past in kofferbak · ${fitSub}</span></div>`,
-    `<div class="chip"><b>${nest?nest.sheets.length:0}</b><span>platen ${SW} × ${SH} mm</span></div>`,
+    `<div class="chip"><b>${nSheets}</b><span>platen · ${perT}</span></div>`,
     `<div class="chip"><b>${fmt(kg,1)}</b><span>kg hout · ${fmt(woodM2,2)} m²</span></div>`
   ].join('');
 }
@@ -489,7 +699,6 @@ function renderTrunk(){
   g+=`<line class="s-dim" x1="0" y1="${D+pad*0.45}" x2="${W}" y2="${D+pad*0.45}" stroke-width="${fs*0.12}"/>`;
   g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP</text>`;
   g+=`<text class="s-sub" x="${-pad*0.35}" y="${D/2}" font-size="${fs*0.8}" text-anchor="middle" transform="rotate(-90 ${-pad*0.35} ${D/2})">${fmt(D)} mm diep</text>`;
-  // plaats vanaf de achterklep: y omdraaien zodat kratten aan de klepkant staan
   res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,tooTall=+c.H>+tr.h;
     g+=`<rect class="s-crate ${tooTall?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
     const f=Math.min(fs*1.1,p.w/7,p.h/3.2);
@@ -508,34 +717,57 @@ function renderTrunk(){
   $('#trunkNotes').innerHTML=notes.map(([c,t])=>`<li class="${c}">${t}</li>`).join('');
   return res;
 }
+function toolRect(r,fs,tall){
+  const tl=r.it.tool;
+  let g=`<rect class="s-tool" x="${r.X}" y="${r.Y}" width="${r.SX}" height="${r.SY}" rx="3" style="fill:${catColor(tl.cat)};fill-opacity:.82"${tall?' stroke-dasharray="6 4"':''}><title>${esc(tl.name)} · ${fmt(tl.l)}×${fmt(tl.w)}×${fmt(tl.h)}</title></rect>`;
+  const f=Math.min(fs,r.SX/Math.max(6,(tl.name||'').length*0.55),r.SY/2.6);
+  if(f>=fs*0.4)g+=`<text class="s-txt" x="${r.X+r.SX/2}" y="${r.Y+r.SY/2}" font-size="${f}" text-anchor="middle" dominant-baseline="middle">${esc(tl.name)}</text>`;
+  return g;
+}
 function crateVizHTML(c){
-  const s=S(),inn=crateInner(c),t=s.t,cl=s.clearance;
+  const s=S(),inn=crateInner(c),t=+s.t,cl=+s.clearance;
   if(!crateValid(c))return`<div class="empty"><b>Maten te klein</b><p>Een krat moet minstens ${4*t+30} × ${4*t+30} × ${3*t+20} mm zijn.</p></div>`;
-  const items=toolItems(c.id),res=packTools(c,items);
-  const L=+c.L,W=+c.W,fs=Math.max(L,W)/38;
+  const L=+c.L,W=+c.W,fs=Math.max(L,W)/38,tools=crateTools(c),items=toolItems(tools);
   let g=`<svg viewBox="-4 -4 ${L+8} ${W+8}" role="img" aria-label="Bovenaanzicht van ${esc(c.name)}">`;
   g+=`<rect class="s-wall" x="0" y="0" width="${L}" height="${W}" rx="2"/><rect class="s-inner" x="${t}" y="${t}" width="${inn.L}" height="${inn.W}"/>`;
-  res.placed.forEach(p=>{const it=p.it,x=t+cl/2+p.x,y=t+cl/2+p.y,tall=it.H>inn.H;
-    g+=`<rect class="s-tool" x="${x}" y="${y}" width="${p.w}" height="${p.h}" rx="3" style="fill:${catColor(it.tool.cat)};fill-opacity:.82"${tall?' stroke-dasharray="6 4"':''}/>`;
-    const f=Math.min(fs,p.w/Math.max(6,(it.tool.name||'').length*0.55),p.h/2.6);
-    if(f>=fs*0.45)g+=`<text class="s-txt" x="${x+p.w/2}" y="${y+p.h/2}" font-size="${f}" text-anchor="middle" dominant-baseline="middle">${esc(it.tool.name)}</text>`;
-  });
-  g+='</svg>';
-  const usedA=res.placed.reduce((a,p)=>a+p.w*p.h,0),pct=usedA/(inn.L*inn.W)*100;
-  const m2=(2*L*c.H+2*W*c.H+L*W)/1e6,kg=m2*t/1000*DENSITY;
-  const notes=[];
+  const notes=[];let usedA=0,nDiv=0,nBins=0,nComp=0;
+  if(layoutOn(c)){
+    const lay=crateLayout(c);
+    lay.comps.forEach(cp=>{
+      nComp++;usedA+=cp.SX*cp.SY;
+      g+=`<rect class="s-comp" x="${cp.X}" y="${cp.Y}" width="${cp.SX}" height="${cp.SY}"/>`;
+      if(cp.kind==='schot')cp.tools.forEach(r=>{g+=toolRect(r,fs,r.it.H>inn.H)});
+      else cp.binsPlaced.forEach(b=>{nBins++;const bt=+s.binT||6;
+        g+=`<rect class="s-bin" x="${b.X}" y="${b.Y}" width="${b.L}" height="${b.W}" rx="1.5"><title>Bak ${esc(b.label)} · ${fmt(b.L)}×${fmt(b.W)}×${fmt(b.H)} mm</title></rect><rect class="s-bin-in" x="${b.X+bt}" y="${b.Y+bt}" width="${b.L-2*bt}" height="${b.W-2*bt}"/>`;
+        b.tools.forEach(r=>{g+=toolRect(r,fs*0.8,r.it.H>b.H-bt)});
+      });
+    });
+    lay.cross.forEach(cd=>{nDiv++;g+=`<rect class="s-div" x="${cd.x}" y="${t}" width="${t}" height="${inn.W}"/>`});
+    lay.subs.forEach(sd=>{nDiv++;g+=`<rect class="s-div" x="${sd.xs}" y="${sd.y}" width="${sd.xe-sd.xs}" height="${t}"/>`});
+    notes.push(...lay.notes);
+    if(items.length&&!lay.notes.length)notes.push(['ok',`Alles past: ${nComp} vak(ken), ${nDiv} schot(ten)${nBins?`, ${nBins} losse bak(ken)`:''}.`]);
+  }else{
+    const res=packBin(items,inn.L-cl,inn.W-cl,cl);
+    res.placed.forEach(p=>{usedA+=p.w*p.h;g+=toolRect({X:t+cl/2+p.y,Y:t+cl/2+p.x,SX:p.h,SY:p.w,it:p.it},fs,p.it.H>inn.H)});
+    if(res.left.length)notes.push(['bad',`Past niet: ${[...new Set(res.left.map(i=>esc(i.tool.name)))].join(', ')}. Maak de krat groter of klik op Maat op inhoud.`]);
+    [...new Set(items.filter(i=>i.H>inn.H).map(i=>i.tool))].forEach(tl=>notes.push(['warn',`${esc(tl.name)} steekt ${fmt(tl.h-inn.H)} mm boven de rand uit.`]));
+    if(items.length&&!notes.length)notes.push(['ok','Alles past, met '+cl+' mm speling rondom.']);
+  }
   if(!items.length)notes.push(['','Nog geen gereedschap in deze krat. Kies hem in de kolom Krat.']);
-  if(res.left.length)notes.push(['bad',`Past niet: ${[...new Set(res.left.map(i=>esc(i.tool.name)))].join(', ')}. Maak de krat groter of klik op Maat op inhoud.`]);
-  const tall=[...new Set(items.filter(i=>i.H>inn.H).map(i=>i.tool))];
-  tall.forEach(tl=>notes.push(['warn',`${esc(tl.name)} steekt ${fmt(tl.h-inn.H)} mm boven de rand uit.`]));
-  if(items.length&&!res.left.length&&!tall.length)notes.push(['ok','Alles past, met '+cl+' mm speling rondom.']);
+  const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
+  const big=cratePanels(c).filter(p=>!onSheet(p.w,p.h));
+  if(big.length)notes.push(['bad',`${big.length} paneel/panelen passen niet op ${s.machine==='laser'?'het werkveld':'de plaat'} van ${SW} × ${SH} mm (o.a. ${esc(big[0].name)}, ${fmt(big[0].w)} × ${fmt(big[0].h)}). Maak de krat kleiner, verdeel de inhoud over twee kratten of gebruik de CNC.`]);
+  g+='</svg>';
+  const pct=usedA/(inn.L*inn.W)*100;
+  const parts=cratePanels(c).concat(binPanels(c));
+  const m2=parts.reduce((a,p)=>a+p.w*p.h/1e6,0),kg=parts.reduce((a,p)=>a+p.w*p.h/1e6*p.t/1000*DENSITY,0);
   const cats=[...new Set(items.map(i=>i.tool.cat))];
-  return`<figure>${g}<figcaption>Bovenaanzicht binnenkant · ${fmt(inn.L)} × ${fmt(inn.W)} mm · ${fmt(pct)}% gevuld</figcaption>
-    ${cats.length?`<div class="legend">${cats.map(ct=>`<span><i style="background:${catColor(ct)}"></i>${esc(ct||'Overig')}</span>`).join('')}</div>`:''}</figure>
+  return`<figure>${g}<figcaption>Bovenaanzicht binnenkant · ${fmt(inn.L)} × ${fmt(inn.W)} mm · ${fmt(pct)}% ${layoutOn(c)?'in vakken':'gevuld'}</figcaption>
+    ${cats.length?`<div class="legend">${cats.map(ct=>`<span><i style="background:${catColor(ct)}"></i>${esc(ct||'Overig')}</span>`).join('')}${nBins?'<span><i style="background:var(--ply);border:1px solid var(--ply-edge)"></i>losse bak</span>':''}${nDiv?'<span><i style="background:var(--ply-edge)"></i>schot</span>':''}</div>`:''}</figure>
     <div style="display:flex;flex-direction:column;gap:14px;min-width:0">
       <dl class="specs"><dt>Binnenmaat</dt><dd>${fmt(inn.L)} × ${fmt(inn.W)}</dd><dt>Hoogte binnen</dt><dd>${fmt(inn.H)} mm</dd>
       <dt>Gereedschap</dt><dd>${items.length} st.</dd><dt>Hout</dt><dd>${fmt(m2,2)} m² · ${fmt(kg,1)} kg</dd>
-      <dt>Delen</dt><dd>5${c.handles?' · 2 grepen':''}</dd></dl>
+      <dt>Delen</dt><dd>${parts.length}${c.handles?' · 2 grepen':''}</dd></dl>
       <ul class="notes">${notes.map(([k,t])=>`<li class="${k}">${t}</li>`).join('')}</ul>
     </div>`;
 }
@@ -552,6 +784,7 @@ function renderCrates(){
       <div class="field"><label for="cl-${c.id}">Lengte</label><input type="number" step="any" id="cl-${c.id}" value="${c.L}" data-s="crate" data-id="${c.id}" data-k="L"></div>
       <div class="field"><label for="cw-${c.id}">Breedte</label><input type="number" step="any" id="cw-${c.id}" value="${c.W}" data-s="crate" data-id="${c.id}" data-k="W"></div>
       <div class="field"><label for="ch-${c.id}">Hoogte</label><input type="number" step="any" id="ch-${c.id}" value="${c.H}" data-s="crate" data-id="${c.id}" data-k="H"></div>
+      <div class="field"><label for="cy-${c.id}">Indeling</label><select id="cy-${c.id}" data-s="crate" data-id="${c.id}" data-k="layout"><option value="vakken" ${layoutOn(c)?'selected':''}>Vakken</option><option value="vrij" ${layoutOn(c)?'':'selected'}>Vrij, geen schotten</option></select></div>
       <label style="align-self:center"><input type="checkbox" id="cg-${c.id}" ${c.handles?'checked':''} data-s="crate" data-id="${c.id}" data-k="handles"> handgrepen</label>
       <span class="spacer"></span>
       <button data-act="fit" data-id="${c.id}" title="Kleinste lengte en hoogte waarin het toegewezen gereedschap past, bij de huidige breedte">Maat op inhoud</button>
@@ -564,8 +797,10 @@ function renderCrateViz(){state.crates.forEach(c=>{const el=document.getElementB
 function renderTools(){
   const opts=c=>`<option value="">— geen —</option>`+state.crates.map(k=>`<option value="${k.id}" ${k.id===c?'selected':''}>${esc(k.name)}</option>`).join('');
   const tb=$('#tools');
-  if(!state.tools.length){tb.innerHTML=`<tr><td colspan="8"><div class="empty"><b>Nog geen gereedschap</b><p>Meet de koffer of het apparaat op (grondvlak L × B en hoogte, in mm) en voeg het toe.</p></div></td></tr>`}
-  else tb.innerHTML=state.tools.map(t=>{const un=!t.crate||!state.crates.some(c=>c.id===t.crate);
+  const groups=[...new Set(state.tools.map(t=>(t.group||'').trim()).filter(Boolean))];
+  $('#groupList').innerHTML=groups.map(g=>`<option value="${esc(g)}">`).join('');
+  if(!state.tools.length){tb.innerHTML=`<tr><td colspan="10"><div class="empty"><b>Nog geen gereedschap</b><p>Meet de koffer of het apparaat op (grondvlak L × B en hoogte, in mm) en voeg het toe.</p></div></td></tr>`}
+  else tb.innerHTML=state.tools.map(t=>{const un=!t.crate||!state.crates.some(c=>c.id===t.crate),vak=vakOf(t);
     return`<tr class="${un?'unassigned':''}" data-tool="${t.id}">
     <td><input type="text" id="tn-${t.id}" aria-label="Naam" value="${esc(t.name)}" placeholder="bijv. Makita DHP485 in Makpac 2" data-s="tool" data-id="${t.id}" data-k="name"></td>
     <td><span class="swatch" style="background:${catColor(t.cat)}"></span><select id="tc-${t.id}" aria-label="Soort" data-s="tool" data-id="${t.id}" data-k="cat">${CATS.map(c=>`<option ${c===t.cat?'selected':''}>${c}</option>`).join('')}</select></td>
@@ -574,29 +809,35 @@ function renderTools(){
     <td style="text-align:right"><input type="number" step="any" id="th-${t.id}" aria-label="Hoogte" value="${t.h}" data-s="tool" data-id="${t.id}" data-k="h"></td>
     <td style="text-align:right"><input type="number" step="1" min="1" id="tq-${t.id}" aria-label="Aantal" value="${t.qty||1}" data-s="tool" data-id="${t.id}" data-k="qty" style="width:56px"></td>
     <td><select id="tk-${t.id}" aria-label="Krat" data-s="tool" data-id="${t.id}" data-k="crate">${opts(t.crate)}</select></td>
+    <td><input type="text" class="grp" id="tg-${t.id}" aria-label="Groep" list="groupList" value="${esc(t.group||'')}" placeholder="eigen vak" data-s="tool" data-id="${t.id}" data-k="group"></td>
+    <td><select id="tv-${t.id}" aria-label="Vak" data-s="tool" data-id="${t.id}" data-k="vak"><option value="schot" ${vak==='schot'?'selected':''}>Schot</option><option value="bak" ${vak==='bak'?'selected':''}>Losse bak</option></select></td>
     <td><button class="ghost" data-act="deltool" data-id="${t.id}" aria-label="Verwijder ${esc(t.name)}">×</button></td></tr>`}).join('');
   const un=state.tools.filter(t=>!t.crate||!state.crates.some(c=>c.id===t.crate)).length;
   $('#toolsFoot').textContent=state.tools.length?(un?`${un} item(s) nog niet in een krat (oranje streep).`:'Alles is ingedeeld.'):'';
 }
+let lastNest=null;
 function renderSheets(){
   const s=S(),nest=nestAll(),[SW,SH]=[nest.SW,nest.SH];
-  $('#sheetIntro').textContent=s.machine==='laser'
-    ?`Lasersnijder, werkveld ${SW} × ${SH} mm. Rood = snijden (haarlijn), blauw = graveren. Kerf van ${s.kerf} mm is al gecompenseerd.`
-    :`CNC, plaat ${SW} × ${SH} mm. Contouren zijn de echte maat: frees ze buiten de lijn. Binnenhoeken hebben dogbones voor een frees van Ø${s.bit} mm.`;
-  $('#sheetCtl').innerHTML=state.crates.length?`<span class="hint">Meenemen:</span>`+state.crates.map(c=>`<label><input type="checkbox" id="ex-${c.id}" data-act="toggleex" data-id="${c.id}" ${excluded.has(c.id)?'':'checked'}> ${esc(c.name)}</label>`).join(''):'<span class="hint">Nog geen kratten.</span>';
-  let html='';
-  if(nest.over.length)html+=`<ul class="notes" style="padding:16px 16px 0"><li class="bad">Te groot voor ${SW} × ${SH} mm: ${nest.over.map(p=>esc(p.crate.name+' · '+p.g.name)+` (${fmt(p.w)}×${fmt(p.h)})`).join(', ')}. Maak de krat kleiner, kies CNC of pas de plaatmaat aan bij Instellingen.</li></ul>`;
-  if(!nest.sheets.length&&!nest.over.length){$('#sheets').innerHTML=`<div class="empty"><b>Geen onderdelen</b><p>Voeg een krat toe of vink er een aan.</p></div>`;return nest}
-  html+=`<div class="sheets">`+nest.sheets.map((sh,i)=>{
-    const area=sh.reduce((a,p)=>a+p.w*p.h,0)/(SW*SH)*100;
-    return`<div class="sheet"><svg viewBox="0 0 ${SW} ${SH}" role="img" aria-label="Plaat ${i+1}"><rect class="s-sheet" x="0" y="0" width="${SW}" height="${SH}" stroke-width="${SW/300}"/>${sh.map(pl=>partSVG(pl,true).replace('class="s-part"',`class="s-part" stroke-width="${f2(SW/500)}"`)).join('')}</svg>
-      <div class="sheet-foot"><span>Plaat ${i+1} · ${sh.length} delen · ${fmt(area)}% benut</span>
-      <span style="display:flex;gap:6px">${(dl||LOCAL)?`<button class="primary" data-act="dl" data-i="${i}">Download SVG</button>`:''}<button data-act="copy" data-i="${i}">Kopieer SVG</button></span></div></div>`}).join('')+`</div>`;
-  $('#sheets').innerHTML=html;
   lastNest=nest;
+  $('#sheetIntro').textContent=s.machine==='laser'
+    ?`Lasersnijder, werkveld ${SW} × ${SH} mm. Rood = snijden (haarlijn), blauw = graveren. Kerf van ${s.kerf} mm is al gecompenseerd. Eén set platen per plaatdikte.`
+    :`CNC, plaat ${SW} × ${SH} mm. Contouren zijn de echte maat: frees ze buiten de lijn, sleuven binnen de lijn. Binnenhoeken hebben dogbones voor een frees van Ø${s.bit} mm.`;
+  $('#sheetCtl').innerHTML=state.crates.length?`<span class="hint">Meenemen:</span>`+state.crates.map(c=>`<label><input type="checkbox" id="ex-${c.id}" data-act="toggleex" data-id="${c.id}" ${excluded.has(c.id)?'':'checked'}> ${esc(c.name)}</label>`).join(''):'<span class="hint">Nog geen kratten.</span>';
+  if(!nest.parts.length){$('#sheets').innerHTML=`<div class="empty"><b>Geen onderdelen</b><p>Voeg een krat toe of vink er een aan.</p></div>`;return nest}
+  let html='';
+  if(s.machine==='cnc'&&(+s.bit>Math.min(...nest.groups.map(g=>g.t))))html+=`<ul class="notes" style="padding:16px 16px 0"><li class="bad">De frees (Ø${s.bit} mm) is breder dan de dunste plaat: de sleuven voor de lipjes kunnen niet gefreesd worden. Kies een kleinere frees of dikkere bakken.</li></ul>`;
+  nest.groups.forEach((grp,gi)=>{
+    html+=`<div class="sheet-group"><h3>${fmt(grp.t,1)} mm multiplex · ${grp.sheets.length} ${grp.sheets.length===1?'plaat':'platen'}</h3>`;
+    if(grp.over.length)html+=`<ul class="notes" style="padding:12px 16px 0"><li class="bad">Te groot voor ${SW} × ${SH} mm: ${grp.over.map(p=>esc(p.crate.name+' · '+p.g.name)+` (${fmt(p.w)}×${fmt(p.h)})`).join(', ')}. Maak de krat kleiner, kies CNC of pas de plaatmaat aan bij Instellingen.</li></ul>`;
+    html+=`<div class="sheets">`+grp.sheets.map((sh,i)=>{
+      const area=sh.reduce((a,p)=>a+p.w*p.h,0)/(SW*SH)*100;
+      return`<div class="sheet"><svg viewBox="0 0 ${SW} ${SH}" role="img" aria-label="Plaat ${i+1}, ${fmt(grp.t,1)} mm"><rect class="s-sheet" x="0" y="0" width="${SW}" height="${SH}" stroke-width="${SW/300}"/>${sh.map(pl=>partSVG(pl,true).replace('class="s-part"',`class="s-part" stroke-width="${f2(SW/500)}"`)).join('')}</svg>
+        <div class="sheet-foot"><span>Plaat ${i+1} · ${sh.length} delen · ${fmt(area)}% benut</span>
+        <span style="display:flex;gap:6px">${(dl||LOCAL)?`<button class="primary" data-act="dl" data-g="${gi}" data-i="${i}">Download SVG</button>`:''}<button data-act="copy" data-g="${gi}" data-i="${i}">Kopieer SVG</button></span></div></div>`}).join('')+`</div></div>`;
+  });
+  $('#sheets').innerHTML=html;
   return nest;
 }
-let lastNest=null;
 function renderSettings(){
   const s=S(),laser=s.machine==='laser';
   $('#settings').innerHTML=`
@@ -610,7 +851,7 @@ function renderSettings(){
     :`<div class="dim-row"><div class="field"><label for="s-sw">Plaat B</label><input type="number" step="any" id="s-sw" value="${s.cncSheet[0]}" data-s="set" data-k="cncSheet.0"></div>
       <div class="field"><label for="s-sh">Plaat H</label><input type="number" step="any" id="s-sh" value="${s.cncSheet[1]}" data-s="set" data-k="cncSheet.1"></div>
       <div class="field"><label for="s-bit">Frees Ø</label><input type="number" step="any" id="s-bit" value="${s.bit}" data-s="set" data-k="bit"></div></div>
-      <p class="hint">Dogbones komen in elke binnenhoek, zodat de vingers ondanks de ronde frees helemaal insteken. Tussenruimte tussen delen is minimaal frees + 4 mm.</p>`}
+      <p class="hint">Dogbones komen in elke binnenhoek en de sleuven voor schotten worden met de freesstraal verlengd, zodat alles ondanks de ronde frees helemaal insteekt.</p>`}
   </div>
   <div class="card"><h3>Materiaal & verbinding</h3>
     <div class="dim-row">
@@ -620,6 +861,14 @@ function renderSettings(){
     </div>
     <p class="hint">Vingerbreedte is een streefwaarde; elke rand krijgt een oneven aantal gelijke vingers. Rond 3× de plaatdikte is stevig.</p>
     <label><input type="checkbox" id="s-lab" ${s.labels?'checked':''} data-s="set" data-k="labels"> Onderdeelnamen graveren (blauw)</label>
+  </div>
+  <div class="card"><h3>Schotten & bakken</h3>
+    <div class="dim-row">
+      <div class="field"><label for="s-dh">Schothoogte</label><input type="number" step="any" id="s-dh" value="${s.dividerH}" data-s="set" data-k="dividerH"></div>
+      <div class="field"><label for="s-bt">Dikte bakken</label><input type="number" step="0.05" id="s-bt" value="${s.binT}" data-s="set" data-k="binT"></div>
+      <div class="field"><label for="s-bf">Vingers bakken</label><input type="number" step="any" id="s-bf" value="${s.binFinger}" data-s="set" data-k="binFinger"></div>
+    </div>
+    <p class="hint">Schothoogte 0 = tot de rand. Schotten steken met lipjes door sleuven in wanden, bodem en dwarsschotten. Losse bakken worden van dunnere plaat gemaakt en krijgen hun eigen snijbestanden.</p>
   </div>
   <div class="card"><h3>Inpakken</h3>
     <div class="dim-row">
@@ -662,7 +911,7 @@ document.addEventListener('change',e=>{
   }
   const{s,k}=el.dataset;
   if(s==='crate'&&k==='name')renderTools();
-  if(s==='tool'&&(k==='crate'||k==='cat'))renderTools();
+  if(s==='tool'&&(k==='crate'||k==='cat'||k==='group'))renderTools();
   if(s==='set'&&k==='t')renderSettings();
 });
 let toastT=null;
@@ -672,13 +921,13 @@ const armed={};
 document.addEventListener('click',async e=>{
   const b=e.target.closest('button[data-act]');if(!b)return;
   const act=b.dataset.act,id=b.dataset.id;
-  if(act==='addcrate'){const n=state.crates.length;state.crates.push({id:uid(),name:'Krat '+String.fromCharCode(65+n%26),L:600,W:400,H:300,handles:true});renderAll();scheduleSave()}
+  if(act==='addcrate'){const n=state.crates.length;state.crates.push({id:uid(),name:'Krat '+String.fromCharCode(65+n%26),L:600,W:400,H:300,handles:true,layout:'vakken'});renderAll();scheduleSave()}
   else if(act==='delcrate'){
     if(!armed[id]){armed[id]=true;b.textContent='Zeker weten?';b.classList.add('danger');setTimeout(()=>{armed[id]=false;if(b.isConnected){b.textContent='Verwijder';b.classList.remove('danger')}},3000);return}
     state.crates=state.crates.filter(c=>c.id!==id);state.tools.forEach(t=>{if(t.crate===id)t.crate=''});excluded.delete(id);renderAll();scheduleSave();toast('Krat verwijderd; het gereedschap staat weer als niet ingedeeld.')}
   else if(act==='fit'){const c=state.crates.find(x=>x.id===id);if(!c)return;
-    if(!toolItems(id).length){toast('Wijs eerst gereedschap toe aan deze krat.');return}
-    if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden onder 3 meter.')}
+    if(!toolItems(crateTools(c)).length){toast('Wijs eerst gereedschap toe aan deze krat.');return}
+    if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden.')}
   else if(act==='addtool'){const t={id:uid(),name:'',cat:CATS[0],l:0,w:0,h:0,qty:1,crate:state.crates.length===1?state.crates[0].id:''};state.tools.push(t);renderTools();renderViz();scheduleSave();
     const el=document.getElementById('tn-'+t.id);if(el)el.focus()}
   else if(act==='deltool'){state.tools=state.tools.filter(t=>t.id!==id);renderTools();renderViz();scheduleSave()}
@@ -687,8 +936,8 @@ document.addEventListener('click',async e=>{
   else if(act==='export'){try{await saveFile('kofferbakkratten-gegevens.json',JSON.stringify(state,null,2),'application/json');toast('Gegevens opgeslagen.')}catch(err){if(err&&err.code!=='declined')toast('Opslaan lukt hier niet.')}}
   else if(act==='import'){$('#importFile').click()}
   else if(act==='dl'||act==='copy'){
-    const nest=lastNest||nestAll(),i=+b.dataset.i,sh=nest.sheets[i];if(!sh)return;
-    const svg=sheetFile(sh,nest.SW,nest.SH),name=`kofferbakkratten-plaat-${i+1}-${S().machine}-${S().t}mm.svg`;
+    const nest=lastNest||nestAll(),grp=nest.groups[+b.dataset.g],i=+b.dataset.i,sh=grp&&grp.sheets[i];if(!sh)return;
+    const svg=sheetFile(sh,nest.SW,nest.SH,grp.t),name=`kofferbakkratten-${grp.t}mm-plaat-${i+1}-${S().machine}.svg`;
     if(act==='dl'){try{await saveFile(name,svg,'image/svg+xml');toast('Opgeslagen: '+name)}catch(err){if(err&&err.code!=='declined')toast('Downloaden lukt hier niet; gebruik Kopieer SVG.')}}
     else{try{await navigator.clipboard.writeText(svg);toast('SVG gekopieerd. Plak in een leeg .svg-bestand.')}catch(err){
       const ta=document.createElement('textarea');ta.value=svg;ta.style.cssText='position:fixed;left:-9999px';document.body.appendChild(ta);ta.select();
@@ -697,12 +946,12 @@ document.addEventListener('click',async e=>{
 });
 function loadSample(){
   const a=uid(),b=uid();
-  state.crates.push({id:a,name:'Voorbeeld: accukrat',L:640,W:420,H:330,handles:true},{id:b,name:'Voorbeeld: zagen',L:720,W:420,H:330,handles:true});
-  [['Voorbeeld: boorschroefmachine in koffer','Accutol / boor',395,295,210,1,a],['Voorbeeld: slagschroevendraaier in koffer','Accutol / boor',395,295,210,1,a],
-   ['Voorbeeld: accu 5,0 Ah','Accu & lader',115,75,65,4,a],['Voorbeeld: snellader','Accu & lader',200,120,90,1,a],
-   ['Voorbeeld: invalcirkelzaag in systainer','Zaag',396,296,210,1,b],['Voorbeeld: decoupeerzaag in systainer','Zaag',396,296,157,1,b],
-   ['Voorbeeld: excenterschuurmachine','Schuurmachine',300,130,180,1,''],['Voorbeeld: bitset','Accessoires',160,110,40,2,'']]
-  .forEach(([name,cat,l,w,h,qty,crate])=>state.tools.push({id:uid(),name,cat,l,w,h,qty,crate}));
+  state.crates.push({id:a,name:'Voorbeeld: accukrat',L:640,W:420,H:330,handles:true,layout:'vakken'},{id:b,name:'Voorbeeld: zagen',L:720,W:420,H:330,handles:true,layout:'vakken'});
+  [['Voorbeeld: boorschroefmachine in koffer','Accutol / boor',395,295,210,1,a,''],['Voorbeeld: slagschroevendraaier in koffer','Accutol / boor',395,295,210,1,a,''],
+   ['Voorbeeld: accu 5,0 Ah','Accu & lader',115,75,65,4,a,'Accu\'s'],['Voorbeeld: snellader','Accu & lader',200,120,90,1,a,'Accu\'s'],
+   ['Voorbeeld: invalcirkelzaag in systainer','Zaag',396,296,210,1,b,''],['Voorbeeld: decoupeerzaag in systainer','Zaag',396,296,157,1,b,''],
+   ['Voorbeeld: excenterschuurmachine','Schuurmachine',300,130,180,1,'',''],['Voorbeeld: bitset','Accessoires',160,110,40,2,'','']]
+  .forEach(([name,cat,l,w,h,qty,crate,group])=>state.tools.push({id:uid(),name,cat,l,w,h,qty,crate,group}));
   renderAll();scheduleSave();toast('Voorbeeld geladen. Pas de namen en maten aan naar je eigen gereedschap.');
 }
 
