@@ -792,7 +792,9 @@ function panelGeom(p){
 function crateValid(c){const t=S().t;return c.L>=4*t+30&&c.W>=4*t+30&&c.H>=3*t+20}
 
 /* ---------- nesten, per plaatdikte ---------- */
-function sheetSize(){const s=S();return s.machine==='laser'?s.laserBed.map(Number):s.cncSheet.map(Number)}
+function sheetSize(){const s=S(),v=(s.machine==='laser'?s.laserBed:s.cncSheet).map(Number),d=s.machine==='laser'?DEF.laserBed:DEF.cncSheet;
+  // een halfgetypte maat (bv. 4 of 46 terwijl je 460 typt) niet gebruiken: dat geeft duizenden platen
+  return v.map((x,i)=>x>=50?x:d[i])}
 function nestAll(){
   const s=S(),[SW,SH]=sheetSize(),m=5,gap=s.machine==='cnc'?Math.max(+s.gap||6,(+s.bit||6)+4):(+s.gap||6);
   const parts=[];
@@ -1226,6 +1228,7 @@ function tplSettings(){const s=S(),bit=+s.bit||6,bush=Math.max(+s.bushD||10,bit)
 /* mallen: per unieke rand een of meer stukken die op het werkveld passen */
 function buildTemplates(){
   const s=S(),[SW,SH]=sheetSize(),{bit,bush,o,rb}=tplSettings(),ext=25,maxL=Math.min(SW,SH)-10-2*ext;
+  if(Math.min(SW,SH)<150)return{pieces:[],sheets:[],SW,SH,o,bit,bush,nTpl:0,nSlot:0,tooSmall:true};
   const onBed=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
   const uniq=new Map(),slots=new Map();
   allParts().forEach(({p,owner})=>{
@@ -1248,7 +1251,7 @@ function buildTemplates(){
       if(ed.len+ext-u0<=avail){ranges.push([st,ed.len]);break}
       const c=cuts.filter(x=>x>st+20&&x<=u0+avail).pop();
       // geen plek tussen twee vensters: knip midden in een venster, met 40 mm overlap zodat de frezing doorloopt
-      if(c==null){const cc=u0+avail-10;ranges.push([st,cc]);st=cc-40;continue}
+      if(c==null){const cc=u0+avail-10;if(cc-40<=st+20){ranges.push([st,ed.len]);break}ranges.push([st,cc]);st=cc-40;continue}
       ranges.push([st,c]);st=c;}
     ranges.forEach(([a,b],pi)=>{
       const U0=a<1e-6?a-ext:a,U1=b>ed.len-1e-6?b+ext:b,V0=-ext,V1=vmax+45,X=u=>u-U0,Y=v=>v-V0;
@@ -1325,7 +1328,7 @@ function renderSaw(){
       ${rows.map(r=>`<tr><td>${fmt(r.t,1)} mm ${esc(r.mat)}</td><td class="num" style="text-align:right;white-space:nowrap">${fmt(r.sw,1)} × ${fmt(r.sh,1)}</td><td class="num" style="text-align:right">${r.n}</td><td>${r.bed?'machine':'<b>zaag + mal</b>'}</td><td style="font-size:13px;color:var(--muted)">${esc(r.names.slice(0,4).join(', '))}${r.names.length>4?` en ${r.names.length-4} meer`:''}</td></tr>`).join('')}
     </tbody></table></div>
     <h3>Freesmallen</h3>
-    ${T.pieces.length?`<p class="hint">${T.nTpl} randmal(len)${T.nSlot?` en ${T.nSlot} sleufmal(len)`:''}, ${T.pieces.length} stuk(ken) op ${T.sheets.length} plaat/platen van ${T.SW} × ${T.SH} mm. Snijd de mallen uit 6 mm MDF of multiplex.
+    ${T.tooSmall?`<p class="hint">Het werkveld (${T.SW} × ${T.SH} mm) is te klein om mallen op te snijden.</p>`:T.pieces.length?`<p class="hint">${T.nTpl} randmal(len)${T.nSlot?` en ${T.nSlot} sleufmal(len)`:''}, ${T.pieces.length} stuk(ken) op ${T.sheets.length} plaat/platen van ${T.SW} × ${T.SH} mm. Snijd de mallen uit 6 mm MDF of multiplex.
       Vensters zijn ${fmt(T.o,1)} mm groter dan de te frezen ruimte: (kopieerring Ø${fmt(T.bush,1)} − frees Ø${fmt(T.bit,1)}) / 2.
       Leg de blauwe lijn <i>rand</i> op de rand van het paneel en de lijn <i>einde</i> op het einde, klem vast en frees met de kopieerring langs de vensters, in stappen tot de volle diepte.
       Binnenhoeken krijgen de straal van de frees: zet ze haaks met een beitel of rond de hoeken van de vingers iets af. Sleufmallen: leg het kruis op je potloodkruis.</p>
@@ -1407,7 +1410,8 @@ function renderSettings(){
     <input type="file" id="importFile" accept=".json,application/json" hidden>
   </div>`;
 }
-let vizQueued=false;
+let vizQueued=false,vizTimer=null;
+function renderVizSoon(){clearTimeout(vizTimer);vizTimer=setTimeout(renderViz,250)}
 function renderViz(){if(vizQueued)return;vizQueued=true;const run=()=>{if(!vizQueued)return;vizQueued=false;
   const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{renderSaw()}catch(e){console.error(e)}try{render3d()}catch(e){console.error(e)}};
   // frame-timer, met een gewone timer als reserve (die staat stil in verborgen tabbladen)
@@ -1810,7 +1814,7 @@ document.addEventListener('input',e=>{
   else if(s==='tool'){const t=state.tools.find(x=>x.id===id);if(t)t[k]=v}
   else if(s==='stack'){const k2=(state.stacks||[]).find(x=>x.id===id);if(k2)k2[k]=v}
   else if(s==='case'){const k2=(state.stacks||[]).find(x=>x.id===id),c=k2&&k2.cases[+el.dataset.i];if(c){c.h=v;const lab=el.closest('.stack-row');const sum=lab&&lab.querySelector('.num');if(sum)sum.textContent=`${MAKPAC.L} × ${MAKPAC.W} × ${fmt(stackH(k2))} mm`}}
-  scheduleSave();renderViz();
+  scheduleSave();renderVizSoon();
 });
 document.addEventListener('change',e=>{
   const el=e.target;if(!el.dataset)return;
