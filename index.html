@@ -212,8 +212,8 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
         <button data-act="v3cross">+ Dwarsschot</button>
         <button data-act="v3sub">+ Tussenschot</button>
         <button data-act="v3del" id="v3-del" disabled>Verwijder schot</button>
-        <button data-act="autolayout">Automatisch indelen</button>
-        <span class="hint">Sleep gereedschap, bakken en schotten. Dubbelklik draait gereedschap of een bak. Klik een schot aan en druk op Delete om het te verwijderen.</span>
+        <button data-act="autolayout" id="v3-auto">Automatisch indelen</button>
+        <span class="hint" id="v3-hint">Sleep gereedschap, bakken en schotten. Dubbelklik draait gereedschap of een bak. Klik een schot aan en druk op Delete om het te verwijderen.</span>
       </div>
       <div id="view3d" style="min-height:300px;touch-action:none"></div>
     </div>
@@ -258,7 +258,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires','Handgereedschap','Overig'];
 const BAK_CATS=['Accu & lader','Accessoires','Handgereedschap'];
 const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
-  binT:6,binFinger:20,dividerH:0,base:{type:'geen',size:'heel',H:80},
+  binT:6,binFinger:20,dividerH:0,base:{type:'geen',size:'heel',H:80,cross:[],subs:[],cols:1,rows:1},
   laserBed:[813,508],cncSheet:[2440,1220],trunk:{model:'',w:1000,d:850,h:450,archW:0,archFrom:200,archLen:400,dFolded:0,dTop:0,seat:'up',openW:0,openH:0,est:[]}};
 /* Bekende auto's. est = velden die geschat zijn en nagemeten moeten worden. */
 const CARS={
@@ -832,11 +832,41 @@ function baseGeom(tg){
   const inner=bak?{x:x+t,y:y+t,w:w-2*t,h:h-2*t}:{x,y,w,h};
   return{type:b.type,x,y,w,h,H:Hb,inner,z:t,t};
 }
+/* Schotten in de basisbak, in basis-coördinaten (x langs de breedte van de kofferbak, y vanaf de achterklep). */
+function subsInBays(list,bays,W,t){
+  return(list||[]).map(sd=>{const dist=b=>+sd.x<b.x0?b.x0-sd.x:+sd.x>b.x1?sd.x-b.x1:0;
+    const i=bays.reduce((bi,b,k)=>dist(b)<dist(bays[bi])?k:bi,0),b=bays[i],y=Math.min(Math.max(+sd.y,t+10),W-2*t-10);
+    return{y,xs:b.x0,xe:b.x1,bay:i,startWall:i===0?'L':'cross',endWall:i===bays.length-1?'R':'cross'}});
+}
+function baseLayout(bg){
+  const b=S().base,t=bg.t,L=bg.w;
+  const cross=(b.cross||[]).map(Number).filter(x=>x>=t+10&&x<=L-2*t-10).sort((p,q)=>p-q).filter((x,i,a)=>!i||x-a[i-1]>=t+10).map(x=>({x}));
+  return{cross,subs:subsInBays(b.subs,baysOf({L},cross),bg.h,t),Hd:bg.H-t};
+}
+function baseDivRects(bg){
+  if(!bg||bg.type!=='bak')return[];
+  const t=bg.t,lay=baseLayout(bg);
+  return lay.cross.map(d=>({x:bg.x+d.x,y:bg.y+t,w:t,h:bg.h-2*t})).concat(lay.subs.map(d=>({x:bg.x+d.xs,y:bg.y+d.y,w:d.xe-d.xs,h:t})));
+}
 function basePanels(bg){
   if(!bg)return[];
   const s=S(),t=+s.t;
-  if(bg.type==='bak')return boxPanels(bg.w,bg.h,bg.H,t,+s.finger,false).map(p=>Object.assign(p,{name:'basisbak · '+p.name}));
+  if(bg.type==='bak'){
+    const ps=boxPanels(bg.w,bg.h,bg.H,t,+s.finger,false),lay=baseLayout(bg);
+    if(lay.cross.length||lay.subs.length){
+      const dv=dividerPanels({L:bg.w,W:bg.h,H:bg.H,handles:false},lay);
+      ps.forEach(p=>{p.holes=dv.holes[p.kind]||[]});ps.push(...dv.panels);
+    }
+    return ps.map(p=>Object.assign(p,{name:'basisbak · '+p.name}));
+  }
   return[{name:'vloerbord',kind:'bottom',w:bg.w,h:bg.h,t,pts:[[0,0],[bg.w,0],[bg.w,bg.h],[0,bg.h]],holes:[]}];
+}
+function editBase(fn){
+  const bg=baseGeom(trunkGeom());if(!bg||bg.type!=='bak')return;
+  const lay=baseLayout(bg),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y}))};
+  fn(m,lay,bg);
+  S().base.cross=m.cross.map(Math.round);S().base.subs=m.subs.map(d=>({x:Math.round(d.x),y:Math.round(d.y)}));
+  scheduleSave();renderViz();
 }
 function passesOpening(c){
   const tr=S().trunk,ow=+tr.openW,oh=+tr.openH;if(!(ow>0&&oh>0))return true;
@@ -854,12 +884,12 @@ function renderTrunk(){
     return{x:+c.pos.x||0,y:+c.pos.y||0,w:rot?+c.W:+c.L,h:rot?+c.L:+c.W,rot,it:{c},fixed:true}});
   fixed.forEach(p=>{const c=p.it.c;p.z=inBase(p)?bg.z:0;const maxD=Math.min(D,tg.depthAt(+c.H+p.z));
     const out=p.x<-1||p.y<-1||p.x+p.w>W+1||p.y+p.h>maxD+1;
-    const ov=obst.concat(fixed.filter(q=>q!==p),bg&&!p.z?[bgRect]:[]).some(o=>p.x<o.x+o.w-1&&p.x+p.w>o.x+1&&p.y<o.y+o.h-1&&p.y+p.h>o.y+1);
+    const ov=obst.concat(fixed.filter(q=>q!==p),bg&&!p.z?[bgRect]:[],p.z?baseDivRects(bg):[]).some(o=>p.x<o.x+o.w-1&&p.x+p.w>o.x+1&&p.y<o.y+o.h-1&&p.y+p.h>o.y+1);
     p.bad=out||ov;p.why=out?(p.y+p.h>maxD+1&&p.y+p.h<=D+1?'te diep voor de schuine rugleuning':'buiten de kofferbak'):ov?(bg&&!p.z?'staat half op de basis of overlapt een andere krat':'overlapt een wielkast of andere krat'):''});
   let left=valid.filter(c=>!c.pos).map(c=>({w:+c.L,h:+c.W,c}));
   const inB=[];
   if(bg){
-    const R=bg.inner,ob=fixed.filter(p=>p.z).map(p=>({x:p.x-R.x,y:p.y-R.y,w:p.w,h:p.h}));
+    const R=bg.inner,ob=fixed.filter(p=>p.z).concat(baseDivRects(bg)).map(p=>({x:p.x-R.x,y:p.y-R.y,w:p.w,h:p.h}));
     const r1=packTrunk(left.map(r=>({w:r.w,h:r.h,c:r.c,maxD:tg.depthAt(+r.c.H+bg.z)-R.y})),R.w,R.h,ob,5);
     r1.placed.forEach(p=>{p.x+=R.x;p.y+=R.y;p.z=bg.z;inB.push(p)});left=r1.left;
   }
@@ -875,7 +905,8 @@ function renderTrunk(){
   if(tg.sloped)g+=`<rect class="s-slope" x="0" y="0" width="${W}" height="${D-tg.dTop}"/><line class="s-dim" x1="0" y1="${D-tg.dTop}" x2="${W}" y2="${D-tg.dTop}" stroke-dasharray="${fs*0.4} ${fs*0.3}" stroke-width="${fs*0.08}"/><text class="s-sub" x="${W-fs*0.3}" y="${D-tg.dTop-fs*0.35}" font-size="${fs*0.6}" text-anchor="end">rugleuning op ${fmt(H)} mm hoogte · ${fmt(tg.dTop)} mm diep</text>`;
   obst.forEach(o=>{g+=`<rect class="s-arch" x="${o.x}" y="${D-o.y-o.h}" width="${o.w}" height="${o.h}"><title>Wielkast</title></rect>`});
   if(bg){g+=`<rect class="s-base" x="${bg.x}" y="${D-bg.y-bg.h}" width="${bg.w}" height="${bg.h}"><title>${bg.type==='bak'?'Basisbak':'Vloerbord'} ${fmt(bg.w)} × ${fmt(bg.h)} mm</title></rect>`;
-    if(bg.type==='bak')g+=`<rect class="s-base-in" x="${bg.inner.x}" y="${D-bg.inner.y-bg.inner.h}" width="${bg.inner.w}" height="${bg.inner.h}"/>`}
+    if(bg.type==='bak')g+=`<rect class="s-base-in" x="${bg.inner.x}" y="${D-bg.inner.y-bg.inner.h}" width="${bg.inner.w}" height="${bg.inner.h}"/>`;
+    baseDivRects(bg).forEach(r=>{g+=`<rect class="s-div" x="${r.x}" y="${D-r.y-r.h}" width="${r.w}" height="${r.h}"/>`})}
   g+=`<text class="s-sub" x="${W/2}" y="${-pad*0.35}" font-size="${fs*0.8}" text-anchor="middle">${folded?'voorstoelen · achterbank plat':'achterbank'} · ${fmt(W)} mm breed</text>`;
   g+=`<line class="s-dim" x1="0" y1="${D+pad*0.45}" x2="${W}" y2="${D+pad*0.45}" stroke-width="${fs*0.12}"/>`;
   g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP${+tr.openW>0?` · opening ${fmt(+tr.openW)} × ${fmt(+tr.openH)}`:''}</text>`;
@@ -903,7 +934,9 @@ function renderTrunk(){
   }else notes.push(['','Voeg een krat toe om te zien hoe alles past.']);
   if(bg){
     const[SW,SH]=sheetSize(),on=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10),big=basePanels(bg).some(p=>!on(p.w,p.h));
-    notes.push(['',`${bg.type==='bak'?'Basisbak':'Vloerbord'}: ${fmt(bg.w)} × ${fmt(bg.h)}${bg.type==='bak'?' × '+fmt(bg.H):''} mm. Kratten erin staan ${fmt(bg.z)} mm hoger.`]);
+    const bl=bg.type==='bak'?baseLayout(bg):null;
+    if(bl&&bl.subs.some((a,i)=>bl.subs.slice(i+1).some(b=>a.bay===b.bay&&Math.abs(a.y-b.y)<bg.t+5)))notes.push(['bad','Twee tussenschotten in de basis staan over elkaar.']);
+    notes.push(['',`${bg.type==='bak'?'Basisbak':'Vloerbord'}${bl&&(bl.cross.length||bl.subs.length)?` met ${bl.cross.length+bl.subs.length} schot(ten)`:''}: ${fmt(bg.w)} × ${fmt(bg.h)}${bg.type==='bak'?' × '+fmt(bg.H):''} mm. Kratten erin staan ${fmt(bg.z)} mm hoger.`]);
     if(big)notes.push(['warn',`De basis past niet op ${S().machine==='laser'?'het werkveld':'de plaat'} van ${SW} × ${SH} mm. Snijd hem op de CNC${S().base.size==='heel'?', of kies een halve basis':''}.`]);
     if(obst.some(o=>bg.x<o.x+o.w&&bg.x+bg.w>o.x&&bg.y<o.y+o.h&&bg.y+bg.h>o.y))notes.push(['bad','De basis overlapt de wielkasten. Kies een halve basis of pas de maten aan.']);
   }
@@ -946,6 +979,12 @@ function renderTrunkForm(){
       ${S().base.type!=='geen'?`<div class="field"><label for="tr-bsize">Formaat</label><select id="tr-bsize" data-s="set" data-k="base.size"><option value="heel" ${S().base.size==='heel'?'selected':''}>Hele vloer</option><option value="links" ${S().base.size==='links'?'selected':''}>Half, links</option><option value="rechts" ${S().base.size==='rechts'?'selected':''}>Half, rechts</option></select></div>`:''}
       ${S().base.type==='bak'?`<div class="field"><label for="tr-bh">Randhoogte</label><input type="number" step="any" id="tr-bh" value="${S().base.H}" data-s="set" data-k="base.H"></div>`:''}
     </div>
+    ${S().base.type==='bak'?`<div class="dim-row">
+      <div class="field"><label for="tr-bc">Vakken breed</label><input type="number" step="1" min="1" id="tr-bc" value="${S().base.cols||1}" data-s="set" data-k="base.cols"></div>
+      <div class="field"><label for="tr-br">Vakken diep</label><input type="number" step="1" min="1" id="tr-br" value="${S().base.rows||1}" data-s="set" data-k="base.rows"></div>
+      <button data-act="basegrid">Verdeel</button>
+    </div>
+    <p class="hint">Verdeel de basisbak in gelijke vakken; schuif de schotten daarna bij in de 3D-weergave.</p>`:''}
     <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep. Diepte bovenin = diepte op hoedenplankhoogte; leeg of 0 als de rugleuning recht staat.</p>`;
 }
 function toolRect(r,fs,tall,bad){
@@ -1118,8 +1157,10 @@ function renderSettings(){
   </div>`;
 }
 let vizQueued=false;
-function renderViz(){if(vizQueued)return;vizQueued=true;requestAnimationFrame(()=>{vizQueued=false;
-  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{render3d()}catch(e){console.error(e)}})}
+function renderViz(){if(vizQueued)return;vizQueued=true;const run=()=>{if(!vizQueued)return;vizQueued=false;
+  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{render3d()}catch(e){console.error(e)}};
+  // frame-timer, met een gewone timer als reserve (die staat stil in verborgen tabbladen)
+  requestAnimationFrame(run);setTimeout(run,60)}
 function renderAll(){renderTrunkForm();fill3dSelect();renderCrates();renderTools();renderSettings();renderViz()}
 
 /* ---------- 3D ---------- */
@@ -1230,7 +1271,9 @@ function trunkGroup(){
   g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x,y,z])=>new THREE.Vector3(x,y,z))),line));
   const bg=lastTrunk.bg;
   if(bg){const bgp=new THREE.Group(),ply=mat3(cssVar('--ply')),edge=cssVar('--ply-edge');
-    basePanels(bg).forEach(p=>{const m=panelMesh(p,ply,edge);m.applyMatrix4(panelMatrix(p,bg.w,bg.h));bgp.add(m)});
+    const dark=mat3(cssVar('--ply-edge')),ink=cssVar('--ink');let ci=0,si=0;
+    basePanels(bg).forEach(p=>{const dv=p.kind==='cross'||p.kind==='sub',m=panelMesh(p,dv?dark:ply,dv?ink:edge);m.applyMatrix4(panelMatrix(p,bg.w,bg.h));bgp.add(m);
+      if(dv){m.userData={kind:'b'+p.kind,idx:p.kind==='cross'?ci++:si++};three.draggables.push(m)}});
     bgp.position.set(bg.x,bg.y,0);g.add(bgp)}
   res.placed.forEach(p=>{
     const c=p.it.c,cg=crateGroup(c);
@@ -1250,7 +1293,8 @@ function snapPos(x,y,w,h,id){
   const xs=[0,tg.W-w],ys=[0,tg.D-h];
   others.forEach(o=>{xs.push(o.x+o.w+gap,o.x-gap-w,o.x,o.x+o.w-w);ys.push(o.y+o.h+gap,o.y-gap-h,o.y,o.y+o.h-h)});
   const bg=lastTrunk&&lastTrunk.bg;
-  if(bg){const R=bg.inner;xs.push(R.x,R.x+R.w-w,bg.x-gap-w,bg.x+bg.w+gap);ys.push(R.y,R.y+R.h-h,bg.y+bg.h+gap)}
+  if(bg){const R=bg.inner;xs.push(R.x,R.x+R.w-w,bg.x-gap-w,bg.x+bg.w+gap);ys.push(R.y,R.y+R.h-h,bg.y+bg.h+gap);
+    baseDivRects(bg).forEach(o=>{xs.push(o.x+o.w+gap,o.x-gap-w);ys.push(o.y+o.h+gap,o.y-gap-h)})}
   const near=(v,list)=>{let b=v,d=S2;list.forEach(t=>{if(Math.abs(t-v)<d){d=Math.abs(t-v);b=t}});return b};
   x=Math.min(Math.max(x,0),Math.max(0,tg.W-w));y=Math.min(Math.max(y,0),Math.max(0,tg.D-h));
   const sx=near(x,xs),sy=near(y,ys);
@@ -1280,6 +1324,8 @@ function setup3dDrag(){
     else if(u.kind==='tool'||u.kind==='bin'){const[x,y]=snapIn(c,u.X+dx,u.Y+dy,u.SX,u.SY,u.key);dx=x-u.X;dy=y-u.Y}
     else if(u.kind==='cross'){const x0=crateLayout(c).cross[u.idx].x,x=Math.round(Math.min(Math.max(x0+dx,t+30),c.L-2*t-30)/5)*5;dx=x-x0;dy=0}
     else if(u.kind==='sub'){const y0=crateLayout(c).subs[u.idx].y,y=Math.round(Math.min(Math.max(y0+dy,t+20),c.W-2*t-20)/5)*5;dy=y-y0}
+    else if(u.kind==='bcross'){const bg=lastTrunk.bg,x0=baseLayout(bg).cross[u.idx].x,x=Math.round(Math.min(Math.max(x0+dx,t+30),bg.w-2*t-30)/5)*5;dx=x-x0;dy=0}
+    else if(u.kind==='bsub'){const bg=lastTrunk.bg,y0=baseLayout(bg).subs[u.idx].y,y=Math.round(Math.min(Math.max(y0+dy,t+20),bg.h-2*t-20)/5)*5;dy=y-y0}
     drag.dx=dx;drag.dy=dy;drag.moved=drag.moved||Math.abs(dx)+Math.abs(dy)>=1;
     drag.o.position.set(drag.pos0.x+dx,drag.pos0.y+dy,drag.pos0.z);three.draw();
   });
@@ -1290,6 +1336,11 @@ function setup3dDrag(){
       const c=state.crates.find(k=>k.id===u.crateId);
       if(c&&moved){c.pos={x:Math.round(u.fx+dx),y:Math.round(u.fy+dy),rot:!!u.rot};scheduleSave();renderViz()}
       return;
+    }
+    if(u.kind==='bcross'||u.kind==='bsub'){
+      if(!moved){three.selected={kind:u.kind,idx:u.idx};render3d();return}
+      editBase(m=>{if(u.kind==='bcross')m.cross[u.idx]+=dx;else{m.subs[u.idx].x+=dx;m.subs[u.idx].y+=dy}});
+      three.selected=null;return;
     }
     const c=cur3d();if(!c)return;
     if(!moved){if(u.kind==='cross'||u.kind==='sub'){three.selected={kind:u.kind,idx:u.idx};render3d()}return}
@@ -1315,38 +1366,56 @@ function setup3dDrag(){
   });
 }
 function deleteSelected(){
-  const c=cur3d(),sel=three&&three.selected;if(!c||!sel)return;
-  editManual(c,m=>{(sel.kind==='cross'?m.cross:m.subs).splice(sel.idx,1)});
+  const sel=three&&three.selected;if(!sel)return;
+  if(sel.kind==='bcross'||sel.kind==='bsub'){editBase(m=>{(sel.kind==='bcross'?m.cross:m.subs).splice(sel.idx,1)})}
+  else{const c=cur3d();if(!c)return;editManual(c,m=>{(sel.kind==='cross'?m.cross:m.subs).splice(sel.idx,1)})}
   three.selected=null;toast('Schot verwijderd.');
 }
+/* vrije plek voor een nieuw schot in een doos van L × W met gegeven indeling en bezette rechthoeken */
+function dividerSpot(L,W,lay,occ,kind){
+  const t=+S().t,bays=baysOf({L},lay.cross).sort((p,q)=>(q.x1-q.x0)-(p.x1-p.x0));
+  const free=(x,y,w,h)=>!occ.some(o=>x<o.x+o.w&&x+w>o.x&&y<o.y+o.h&&y+h>o.y);
+  if(kind==='cross'){
+    const cands=occ.map(o=>o.x+o.w+2).concat(occ.map(o=>o.x-t-2)).concat(bays.map(b=>(b.x0+b.x1)/2-t/2))
+      .filter(x=>x>=t+30&&x<=L-2*t-30&&!lay.cross.some(d=>Math.abs(d.x-x)<t+10));
+    return{x:Math.round(cands.find(x=>free(x,t,t,W-2*t))??cands[cands.length-1]??(L/2-t/2))};
+  }
+  for(const b of bays){
+    // ook het midden van elk vrij vak tussen bestaande tussenschotten, grootste eerst
+    const ys=lay.subs.filter(d=>Math.abs(d.xs-b.x0)<1).map(d=>d.y).sort((p,q)=>p-q),edges=[t-t].concat(ys,[W-t]);
+    const mids=edges.slice(0,-1).map((y0,i)=>({a:i?y0+t:t,b:edges[i+1]})).sort((p,q)=>(q.b-q.a)-(p.b-p.a)).map(g=>(g.a+g.b)/2-t/2);
+    const cands=occ.map(o=>o.y+o.h+2).concat(occ.map(o=>o.y-t-2)).concat(mids,[W/2-t/2])
+      .filter(y=>y>=t+20&&y<=W-2*t-20&&!lay.subs.some(d=>Math.abs(d.xs-b.x0)<1&&Math.abs(d.y-y)<t+10));
+    const y=cands.find(y=>free(b.x0,y,b.x1-b.x0,t));
+    if(y!=null)return{x:(b.x0+b.x1)/2,y:Math.round(y)};
+  }
+  const b=bays[0];return{x:(b.x0+b.x1)/2,y:Math.round(W/2-t/2)};
+}
 function addDivider(kind){
+  if(view3d==='trunk'){
+    editBase((m,lay,bg)=>{
+      const occ=(lastTrunk?lastTrunk.res.placed:[]).filter(p=>p.z).map(p=>({x:p.x-bg.x,y:p.y-bg.y,w:p.w,h:p.h}));
+      const sp=dividerSpot(bg.w,bg.h,lay,occ,kind);
+      if(kind==='cross')m.cross.push(sp.x);else m.subs.push(sp);
+    });
+    return;
+  }
   const c=cur3d();if(!c||!layoutOn(c))return;
-  const t=+S().t;
   editManual(c,(m,lay)=>{
-    // vrije plek zoeken: langs de randen van gereedschap en bakken, anders in het midden van het langste vak
     const occ=lay.tools.map(r=>({x:r.X,y:r.Y,w:r.SX,h:r.SY})).concat(lay.bins.map(b=>({x:b.X,y:b.Y,w:b.L,h:b.W})));
-    const bays=baysOf(c,lay.cross).sort((p,q)=>(q.x1-q.x0)-(p.x1-p.x0));
-    const free=(x,y,w,h)=>!occ.some(o=>x<o.x+o.w&&x+w>o.x&&y<o.y+o.h&&y+h>o.y);
-    if(kind==='cross'){
-      const cands=occ.map(o=>o.x+o.w+2).concat(occ.map(o=>o.x-t-2)).concat(bays.map(b=>(b.x0+b.x1)/2-t/2))
-        .filter(x=>x>=t+30&&x<=c.L-2*t-30&&!lay.cross.some(d=>Math.abs(d.x-x)<t+10));
-      const x=cands.find(x=>free(x,t,t,c.W-2*t))??cands[cands.length-1]??(c.L/2-t/2);
-      m.cross.push(Math.round(x));
-    }else{
-      for(const b of bays){
-        const cands=occ.map(o=>o.y+o.h+2).concat(occ.map(o=>o.y-t-2)).concat([c.W/2-t/2])
-          .filter(y=>y>=t+20&&y<=c.W-2*t-20&&!lay.subs.some(d=>d.bay===lay.cross.filter(q=>q.x<b.x0).length&&Math.abs(d.y-y)<t+10));
-        const y=cands.find(y=>free(b.x0,y,b.x1-b.x0,t));
-        if(y!=null){m.subs.push({x:(b.x0+b.x1)/2,y:Math.round(y)});return}
-      }
-      const b=bays[0];m.subs.push({x:(b.x0+b.x1)/2,y:Math.round(c.W/2-t/2)});
-    }
+    const sp=dividerSpot(+c.L,+c.W,lay,occ,kind);
+    if(kind==='cross')m.cross.push(sp.x);else m.subs.push(sp);
   });
 }
 function updateEdit3d(){
   const row=$('#v3-edit');if(!row||!row.tagName)return;
-  const c=cur3d();row.hidden=!(c&&layoutOn(c));
+  const c=cur3d(),bg=baseGeom(trunkGeom()),onBase=view3d==='trunk'&&bg&&bg.type==='bak';
+  row.hidden=!((c&&layoutOn(c))||onBase);
   const del=$('#v3-del');if(del&&del.tagName)del.disabled=!(three&&three.selected);
+  const auto=$('#v3-auto');if(auto&&auto.tagName)auto.textContent=onBase?'Schotten basis wissen':'Automatisch indelen';
+  const hint=$('#v3-hint');if(hint&&hint.tagName)hint.textContent=onBase
+    ?'Schotten in de basisbak: slepen om te verplaatsen, aanklikken en Delete om te verwijderen. Kratten worden er omheen geplaatst.'
+    :'Sleep gereedschap, bakken en schotten. Dubbelklik draait gereedschap of een bak. Klik een schot aan en druk op Delete om het te verwijderen.';
 }
 function dispose3d(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()})}
 function render3d(){
@@ -1432,6 +1501,16 @@ document.addEventListener('click',async e=>{
   else if(act==='v3cross'){addDivider('cross')}
   else if(act==='v3sub'){addDivider('sub')}
   else if(act==='v3del'){deleteSelected()}
+  else if(act==='basegrid'){
+    editBase((m,lay,bg)=>{
+      const t=bg.t,cols=Math.max(1,Math.round(+S().base.cols||1)),rows=Math.max(1,Math.round(+S().base.rows||1));
+      const cw=(bg.w-2*t-(cols-1)*t)/cols,rh=(bg.h-2*t-(rows-1)*t)/rows;
+      m.cross=[];for(let k=1;k<cols;k++)m.cross.push(t+k*cw+(k-1)*t);
+      m.subs=[];baysOf({L:bg.w},m.cross.map(x=>({x}))).forEach(b=>{for(let k=1;k<rows;k++)m.subs.push({x:(b.x0+b.x1)/2,y:t+k*rh+(k-1)*t})});
+    });
+    toast('Basisbak verdeeld.');
+  }
+  else if(act==='autolayout'&&!id&&view3d==='trunk'){editBase(m=>{m.cross=[];m.subs=[]});if(three)three.selected=null;toast('Schotten uit de basis gehaald.')}
   else if(act==='autolayout'){const c=state.crates.find(x=>x.id===(id||view3d));if(c){delete c.manual;if(three)three.selected=null;scheduleSave();renderViz();toast('Automatisch ingedeeld.')}}
   else if(act==='autopos'){state.crates.forEach(c=>{delete c.pos});renderViz();scheduleSave();toast('Alle kratten automatisch geschikt.')}
   else if(act==='swap'){const c=state.crates.find(x=>x.id===id);if(!c)return;[c.L,c.W]=[c.W,c.L];delete c.manual;renderAll();scheduleSave()}
