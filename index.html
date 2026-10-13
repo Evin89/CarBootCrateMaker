@@ -597,7 +597,7 @@ function fitCrate(c){
       if(built.notes.some(n=>n[0]==='bad')||!built.comps.length)continue;
       H=Math.ceil((Math.max(...built.comps.map(cp=>cp.Hmax))+cl+t)/5)*5;
       start=Math.ceil((2*t+Math.min(...built.comps.map(cp=>Math.min(cp.w,cp.h))))/5)*5;
-      ok=L=>{tmp.L=L;return!arrange(tmp,built).left.length};
+      ok=L=>{tmp.L=L;return!arrange(tmp,built,!!c.binSlots).left.length};
     }else{
       H=Math.ceil((Math.max(...items.map(i=>i.H))+cl+t)/5)*5;
       start=minW;
@@ -613,8 +613,12 @@ function fitCrate(c){
     }
   }
   if(!best)return false;
-  // lengte is de langste kant
-  c.L=Math.max(best.L,best.W);c.W=Math.min(best.L,best.W);c.H=best.H;
+  // lengte bij voorkeur de langste kant, maar alleen als de indeling dan nog steeds past (vakken zijn niet symmetrisch)
+  const fitsAt=(L,W)=>{const tmp=Object.assign({},c,{L,W,H:5000});
+    if(layoutOn(c)){const b=buildComps(tmp);return!b.notes.some(n=>n[0]==='bad')&&!arrange(tmp,b,!!c.binSlots).left.length}
+    return!packBin(items,L-2*t-cl,W-2*t-cl,cl).left.length};
+  const swap=best.W>best.L&&fitsAt(best.W,best.L);
+  c.L=swap?best.W:best.L;c.W=swap?best.L:best.W;c.H=best.H;
   delete c.manual;
   return true;
 }

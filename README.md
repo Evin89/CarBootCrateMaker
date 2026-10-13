@@ -5,6 +5,32 @@ Een generator voor multiplex kratten en inbouw voor in de kofferbak, met vingerv
 
 Je meet je gereedschap op (accutollen, zagen, schuurmachines, accessoires…), deelt het in over kratten en ziet direct of alles in de kofferbak past. Uit dezelfde maten komen de snijbestanden.
 
+## Screenshots
+
+![Overzicht](docs/overzicht.png)
+
+**Kofferbak** – bovenaanzicht en zijaanzicht met schuine rugleuning, basisbak en Makita-stapel:
+
+![Kofferbak](docs/kofferbak.png)
+
+**3D** – kratten slepen en draaien, schotten passend maken:
+
+![3D kofferbak](docs/3d-kofferbak.png)
+
+![3D krat](docs/3d-krat.png)
+
+**Krat** met vakken, schotten en losse bakken:
+
+![Krat](docs/krat.png)
+
+**Gereedschap** invoeren:
+
+![Gereedschap](docs/gereedschap.png)
+
+**Snijbestanden** per plaatdikte:
+
+![Snijbestanden](docs/snijbestanden.png)
+
 ## Onderdelen
 
 | Bestand | Wat |
