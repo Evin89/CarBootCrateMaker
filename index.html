@@ -424,7 +424,10 @@ function buildComps(c){
       comps.push({kind:'schot',label:g.label,items,w:r.w+cl,h:r.h+cl,Hmax});
     }
   }
-  if(bins.length){
+  if(bins.length&&c.binSlots){
+    // elke losse bak een eigen vak met schotten eromheen: een vaste plek per bak
+    bins.forEach(b=>comps.push({kind:'bak',label:'Bak '+b.label,bins:[b],w:b.w+2*BIN_GAP,h:b.h+2*BIN_GAP,Hmax:b.H}));
+  }else if(bins.length){
     const r=minRect(bins.map(b=>({w:b.w,h:b.h,bin:b})),BIN_GAP,Wi-2*BIN_GAP,k);
     if(r)comps.push({kind:'bak',label:'Bakken',bins,w:r.w+2*BIN_GAP,h:r.h+2*BIN_GAP,Hmax:Math.max(...bins.map(b=>b.H))});
     else notes.push(['bad','De losse bakken passen niet in de breedte van deze krat.']);
@@ -452,7 +455,7 @@ function arrange(c,built){
 }
 const layoutCache=new Map();
 function crateLayout(c){
-  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,c.shape,c.manual||null,s,crateTools(c)]);
+  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,c.shape,!!c.binSlots,c.manual||null,s,crateTools(c)]);
   if(layoutCache.has(key))return layoutCache.get(key);
   const ar=c.manual?manualLayout(c):autoLayout(c);
   if(layoutCache.size>200)layoutCache.clear();
@@ -838,8 +841,23 @@ function subsInBays(list,bays,W,t){
     const i=bays.reduce((bi,b,k)=>dist(b)<dist(bays[bi])?k:bi,0),b=bays[i],y=Math.min(Math.max(+sd.y,t+10),W-2*t-10);
     return{y,xs:b.x0,xe:b.x1,bay:i,startWall:i===0?'L':'cross',endWall:i===bays.length-1?'R':'cross'}});
 }
+const baseAutoCache=new Map();
+/* "Schotten rond elke krat": kratten in stroken in de basisbak, met een schot tussen elke krat (zelfde indeling als vakken in een krat). */
+function baseAuto(bg){
+  const t=bg.t,m=5,cs=state.crates.filter(c=>c.L>0&&c.W>0&&!c.pos&&crateValid(c));
+  const key=JSON.stringify([bg,cs.map(c=>[c.id,c.L,c.W,c.H])]);
+  if(baseAutoCache.has(key))return baseAutoCache.get(key);
+  const ar=arrange({L:bg.w,W:bg.h},{comps:cs.map(c=>({w:+c.W+2*m,h:+c.L+2*m,crate:c,label:c.name}))});
+  const placed=ar.comps.map(cp=>{const c=cp.crate,w=cp.SX-2*m,h=cp.SY-2*m;
+    return{x:bg.x+cp.X+m,y:bg.y+cp.Y+m,w,h,rot:Math.abs(w-+c.L)>0.5,it:{c},z:t,inBaseAuto:true}});
+  const out={cross:ar.cross,subs:ar.subs,Hd:bg.H-t,placed,left:ar.left.map(cp=>cp.crate)};
+  if(baseAutoCache.size>50)baseAutoCache.clear();
+  baseAutoCache.set(key,out);
+  return out;
+}
 function baseLayout(bg){
   const b=S().base,t=bg.t,L=bg.w;
+  if(b.auto)return baseAuto(bg);
   const cross=(b.cross||[]).map(Number).filter(x=>x>=t+10&&x<=L-2*t-10).sort((p,q)=>p-q).filter((x,i,a)=>!i||x-a[i-1]>=t+10).map(x=>({x}));
   return{cross,subs:subsInBays(b.subs,baysOf({L},cross),bg.h,t),Hd:bg.H-t};
 }
@@ -866,6 +884,7 @@ function editBase(fn){
   const lay=baseLayout(bg),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y}))};
   fn(m,lay,bg);
   S().base.cross=m.cross.map(Math.round);S().base.subs=m.subs.map(d=>({x:Math.round(d.x),y:Math.round(d.y)}));
+  if(S().base.auto){S().base.auto=false;renderTrunkForm();toast('Schotten in de basis staan nu vast; de kratten worden er omheen geplaatst.')}
   scheduleSave();renderViz();
 }
 function passesOpening(c){
@@ -888,7 +907,12 @@ function renderTrunk(){
     p.bad=out||ov;p.why=out?(p.y+p.h>maxD+1&&p.y+p.h<=D+1?'te diep voor de schuine rugleuning':'buiten de kofferbak'):ov?(bg&&!p.z?'staat half op de basis of overlapt een andere krat':'overlapt een wielkast of andere krat'):''});
   let left=valid.filter(c=>!c.pos).map(c=>({w:+c.L,h:+c.W,c}));
   const inB=[];
-  if(bg){
+  if(bg&&bg.type==='bak'&&S().base.auto){
+    const ba=baseLayout(bg),ids=new Set(ba.placed.map(p=>p.it.c.id));
+    ba.placed.forEach(p0=>{const p=Object.assign({},p0),maxD=Math.min(D,tg.depthAt(+p.it.c.H+bg.z));
+      if(p.y+p.h>maxD+1){p.bad=true;p.why='te diep voor de schuine rugleuning'}inB.push(p)});
+    left=left.filter(r=>!ids.has(r.c.id));
+  }else if(bg){
     const R=bg.inner,ob=fixed.filter(p=>p.z).concat(baseDivRects(bg)).map(p=>({x:p.x-R.x,y:p.y-R.y,w:p.w,h:p.h}));
     const r1=packTrunk(left.map(r=>({w:r.w,h:r.h,c:r.c,maxD:tg.depthAt(+r.c.H+bg.z)-R.y})),R.w,R.h,ob,5);
     r1.placed.forEach(p=>{p.x+=R.x;p.y+=R.y;p.z=bg.z;inB.push(p)});left=r1.left;
@@ -896,7 +920,7 @@ function renderTrunk(){
   const r2=packTrunk(left.map(r=>({w:r.w,h:r.h,c:r.c,maxD:tg.depthAt(+r.c.H)})),W,D,obst.concat(fixed,bg?[bgRect]:[],inB),5);
   r2.placed.forEach(p=>{p.z=0});
   const res={placed:fixed.concat(inB,r2.placed),left:r2.left};
-  res.badFixed=fixed.filter(p=>p.bad);
+  res.badFixed=fixed.filter(p=>p.bad).concat(inB.filter(p=>p.bad));
   const used=res.placed.reduce((a,p)=>a+p.w*p.h,0),floor=W*D-obst.reduce((a,o)=>a+o.w*o.h,0);
   res.usedPct=used/floor*100;
   const pad=Math.max(W,D)*0.07,fs=Math.max(W,D)/42;
@@ -984,7 +1008,8 @@ function renderTrunkForm(){
       <div class="field"><label for="tr-br">Vakken diep</label><input type="number" step="1" min="1" id="tr-br" value="${S().base.rows||1}" data-s="set" data-k="base.rows"></div>
       <button data-act="basegrid">Verdeel</button>
     </div>
-    <p class="hint">Verdeel de basisbak in gelijke vakken; schuif de schotten daarna bij in de 3D-weergave.</p>`:''}
+    <label><input type="checkbox" id="tr-bauto" ${S().base.auto?'checked':''} data-s="set" data-k="base.auto"> Schotten rond elke krat</label>
+    <p class="hint">Verdeel de basisbak in gelijke vakken, of zet "Schotten rond elke krat" aan: dan krijgt elke krat een eigen vak op maat. Schuif de schotten daarna bij in de 3D-weergave.</p>`:''}
     <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep. Diepte bovenin = diepte op hoedenplankhoogte; leeg of 0 als de rugleuning recht staat.</p>`;
 }
 function toolRect(r,fs,tall,bad){
@@ -1056,6 +1081,7 @@ function renderCrates(){
       <div class="field"><label for="cy-${c.id}">Indeling</label><select id="cy-${c.id}" data-s="crate" data-id="${c.id}" data-k="layout"><option value="vakken" ${layoutOn(c)?'selected':''}>Vakken</option><option value="vrij" ${layoutOn(c)?'':'selected'}>Vrij, geen schotten</option></select></div>
       <div class="field"><label for="cs-${c.id}">Vorm</label><select id="cs-${c.id}" data-s="crate" data-id="${c.id}" data-k="shape"><option value="vierkant" ${c.shape!=='compact'?'selected':''}>Vierkant</option><option value="compact" ${c.shape==='compact'?'selected':''}>Compact</option></select></div>
       <label style="align-self:center"><input type="checkbox" id="cg-${c.id}" ${c.handles?'checked':''} data-s="crate" data-id="${c.id}" data-k="handles"> handgrepen</label>
+      ${crateTools(c).some(t=>vakOf(t)==='bak')?`<label style="align-self:center" title="Elke losse bak krijgt een eigen vak met schotten, zodat je ziet waar hij hoort"><input type="checkbox" id="cb-${c.id}" ${c.binSlots?'checked':''} data-s="crate" data-id="${c.id}" data-k="binSlots"> schotten rond bakken</label>`:''}
       <span class="spacer"></span>
       <button data-act="swap" data-id="${c.id}" title="Lengte en breedte omwisselen">↻ L/B</button>
       <button data-act="fit" data-id="${c.id}" title="Zoekt de kleinste krat in de gekozen vorm waarin het toegewezen gereedschap past, bij voorkeur passend op de plaat en in de kofferbak">Maat op inhoud</button>
@@ -1504,6 +1530,8 @@ document.addEventListener('change',e=>{
   }
   const{s,k}=el.dataset;
   if(s==='crate'&&k==='name'){renderTools();fill3dSelect()}
+  if(s==='crate'&&k==='binSlots'){const c=state.crates.find(x=>x.id===el.dataset.id);if(c&&c.manual){delete c.manual;scheduleSave();renderViz();toast('Indeling opnieuw automatisch gemaakt, met de nieuwe schotten.')}}
+  if(s==='tool'&&k==='vak')renderCrates();
   if(s==='tool'&&(k==='crate'||k==='cat'||k==='group'))renderTools();
   if(s==='set'&&k==='t')renderSettings();
   if(s==='set'&&(k==='base.type'||k==='base.size'))renderTrunkForm();
