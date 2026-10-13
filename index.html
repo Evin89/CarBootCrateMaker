@@ -80,7 +80,7 @@ label{font-size:13px;color:var(--muted)}
 .unit{font-size:12px;color:var(--muted);font-family:var(--mono)}
 
 /* trunk */
-.trunk-grid{display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:16px;align-items:start}
+.trunk-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
 @media (max-width:760px){.trunk-grid{grid-template-columns:1fr}}
 .trunk-fig{padding:16px;min-width:0}
 .trunk-fig svg{width:100%;height:auto;display:block;max-height:560px}
@@ -146,6 +146,8 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 
 /* svg classes */
 .s-trunk{fill:var(--panel);stroke:var(--ink);stroke-width:2}
+.s-arch{fill:var(--line-strong)}
+.est{font-size:11px;color:var(--warn);font-weight:600;white-space:nowrap}
 .s-crate{fill:var(--ply);stroke:var(--ply-edge);stroke-width:2}
 .s-crate.over{fill:var(--bad-soft);stroke:var(--bad)}
 .s-txt{fill:var(--ink);font-family:var(--display);font-weight:600}
@@ -183,17 +185,11 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
   </header>
 
   <section id="kofferbak">
-    <div class="sec-head"><h2>Kofferbak</h2><p>Bovenaanzicht. De kratten worden automatisch zo compact mogelijk geschikt; de achterklep zit aan de onderkant.</p></div>
+    <div class="sec-head"><h2>Kofferbak</h2><p>Bovenaanzicht. De kratten worden automatisch om de wielkasten heen geschikt, zo dicht mogelijk bij de achterklep (onderkant).</p></div>
     <div class="trunk-grid">
       <div class="card trunk-fig" id="trunkFig"></div>
       <div class="card side">
-        <h3>Binnenmaten</h3>
-        <div class="dim-row">
-          <div class="field"><label for="tr-w">Breedte</label><input type="number" step="any" id="tr-w" data-s="set" data-k="trunk.w"></div>
-          <div class="field"><label for="tr-d">Diepte</label><input type="number" step="any" id="tr-d" data-s="set" data-k="trunk.d"></div>
-          <div class="field"><label for="tr-h">Hoogte</label><input type="number" step="any" id="tr-h" data-s="set" data-k="trunk.h"></div>
-        </div>
-        <p class="hint">In mm. Meet de smalste plek tussen de wielkasten als breedte, en de hoogte tot onder de hoedenplank.</p>
+        <div id="trunkForm" style="display:flex;flex-direction:column;gap:12px"></div>
         <ul class="notes" id="trunkNotes"></ul>
       </div>
     </div>
@@ -237,7 +233,13 @@ const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires'
 const BAK_CATS=['Accu & lader','Accessoires','Handgereedschap'];
 const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
   binT:6,binFinger:20,dividerH:0,
-  laserBed:[813,508],cncSheet:[2440,1220],trunk:{w:1000,d:850,h:450}};
+  laserBed:[813,508],cncSheet:[2440,1220],trunk:{model:'',w:1000,d:850,h:450,archW:0,archFrom:200,archLen:400,dFolded:0,seat:'up',openW:0,openH:0,est:[]}};
+/* Bekende auto's. est = velden die geschat zijn en nagemeten moeten worden. */
+const CARS={
+  c3ii:{label:'Citroën C3 II (2016–2024)',w:1030,archW:990,d:740,dFolded:1100,openW:1030,openH:880,h:520,archFrom:250,archLen:420,
+    est:['h','archFrom','archLen'],
+    note:'Gepubliceerde metingen van dezelfde generatie (ca. 300 liter). Hoogte onder de hoedenplank en de plek van de wielkasten zijn schattingen: meet die na.'}
+};
 const DENSITY=680; // kg/m³ berken multiplex
 const BIN_GAP=3;   // speling rond losse bakken
 let state={v:1,settings:clone(DEF),crates:[],tools:[]};
@@ -453,6 +455,7 @@ function fitCrate(c){
   }
   // Probeer breedtes vanaf de huidige; voorkeur voor een maat waarbij alle panelen op de plaat passen, dan de kleinste vloer.
   const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
+  const tg=trunkGeom(),inTrunk=(L,W,H)=>(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W}],tg.W,tg.D,tg.obst,0).placed.length===1;
   let best=null,atW=null;
   for(let W=+c.W;W<=+c.W+1000;W+=10){
     const tmp=Object.assign({},c,{W,H:5000});
@@ -463,9 +466,10 @@ function fitCrate(c){
     for(let L=start;L<=3000;L+=5){
       tmp.L=L;
       if(arrange(tmp,built).left.length)continue;
-      const cand={L,W,H,area:L*W};
+      const sheetOk=onSheet(L,H)&&onSheet(W,H)&&onSheet(L,W),trunkOk=inTrunk(L,W,H);
+      const cand={L,W,H,area:L*W,score:(sheetOk?0:2)+(trunkOk?0:1)};
       if(W===+c.W)atW=cand;
-      if(onSheet(L,H)&&onSheet(W,H)&&onSheet(L,W)&&(!best||cand.area<best.area-1))best=cand;
+      if(cand.score<3&&(!best||cand.score<best.score||(cand.score===best.score&&cand.area<best.area-1)))best=cand;
       break;
     }
   }
@@ -672,7 +676,7 @@ function renderChips(nest,trunkRes){
   const unass=state.tools.filter(t=>!t.crate||!state.crates.some(c=>c.id===t.crate)).length;
   const woodM2=nest.parts.reduce((a,p)=>a+p.area/1e6,0);
   const kg=nest.parts.reduce((a,p)=>a+p.area/1e6*p.t/1000*DENSITY,0);
-  const tooTall=state.crates.filter(c=>+c.H>+S().trunk.h).length;
+  const tooTall=trunkRes.tooTall||0;
   const fitTxt=!state.crates.length?'–':(trunkRes.left.length||tooTall)?'Nee':'Ja';
   const fitCls=!state.crates.length?'':(trunkRes.left.length||tooTall)?'bad':'ok';
   const fitSub=!state.crates.length?'nog geen kratten':trunkRes.left.length?`${trunkRes.left.length} krat(ten) passen niet`:tooTall?`${tooTall} krat(ten) te hoog`:`${fmt(trunkRes.usedPct)}% vloer bezet`;
@@ -687,35 +691,88 @@ function renderChips(nest,trunkRes){
     `<div class="chip"><b>${fmt(kg,1)}</b><span>kg hout · ${fmt(woodM2,2)} m²</span></div>`
   ].join('');
 }
+function trunkGeom(){
+  const tr=S().trunk,W=+tr.w||1000,folded=tr.seat==='down'&&+tr.dFolded>0,D=folded?+tr.dFolded:(+tr.d||800);
+  const obst=[],aw=+tr.archW>0&&+tr.archW<W?(W-tr.archW)/2:0;
+  if(aw>0){const y0=+tr.archFrom||0,y1=Math.min(D,y0+(+tr.archLen||0));
+    if(y1>y0)obst.push({x:0,y:y0,w:aw,h:y1-y0},{x:W-aw,y:y0,w:aw,h:y1-y0})}
+  return{W,D,H:+tr.h||0,obst,folded};
+}
+/* Kratten op de vloer plaatsen met obstakels (wielkasten): telkens de plek het dichtst bij de achterklep, dan links. */
+function packTrunk(rects,W,D,obst,gap){
+  const placed=[],left=[];
+  const hit=(x,y,w,h)=>obst.some(o=>x<o.x+o.w-1e-6&&x+w>o.x+1e-6&&y<o.y+o.h-1e-6&&y+h>o.y+1e-6)||
+    placed.some(o=>x<o.x+o.w+gap-1e-6&&x+w+gap>o.x+1e-6&&y<o.y+o.h+gap-1e-6&&y+h+gap>o.y+1e-6);
+  rects.slice().sort((a,b)=>b.w*b.h-a.w*a.h).forEach(r=>{
+    const all=obst.concat(placed),g=o=>placed.includes(o)?gap:0;
+    let best=null;
+    for(const[w,h,rot]of[[r.w,r.h,false],[r.h,r.w,true]]){
+      const cx=new Set([0,W-w]),cy=new Set([0,D-h]);
+      all.forEach(o=>{cx.add(o.x+o.w+g(o));cx.add(o.x-g(o)-w);cy.add(o.y+o.h+g(o));cy.add(o.y-g(o)-h)});
+      for(const y of cy)for(const x of cx){
+        if(x<-1e-6||y<-1e-6||x+w>W+1e-6||y+h>D+1e-6||hit(x,y,w,h))continue;
+        if(!best||y<best.y-1e-6||(Math.abs(y-best.y)<1e-6&&x<best.x))best={x,y,w,h,rot,it:r};
+      }
+    }
+    if(best)placed.push(best);else left.push(r);
+  });
+  return{placed,left};
+}
+function passesOpening(c){
+  const tr=S().trunk,ow=+tr.openW,oh=+tr.openH;if(!(ow>0&&oh>0))return true;
+  const[a,b]=[+c.L,+c.W,+c.H].sort((x,y)=>x-y);
+  return a<=Math.min(ow,oh)&&b<=Math.max(ow,oh);
+}
 function renderTrunk(){
-  const tr=S().trunk,W=+tr.w||1000,D=+tr.d||800;
+  const tr=S().trunk,{W,D,H,obst,folded}=trunkGeom();
   const valid=state.crates.filter(c=>c.L>0&&c.W>0);
-  const res=packBin(valid.map(c=>({w:+c.L,h:+c.W,c})),W,D,5);
-  const used=res.placed.reduce((a,p)=>a+p.w*p.h,0);res.usedPct=used/(W*D)*100;
+  const res=packTrunk(valid.map(c=>({w:+c.L,h:+c.W,c})),W,D,obst,5);
+  const used=res.placed.reduce((a,p)=>a+p.w*p.h,0),floor=W*D-obst.reduce((a,o)=>a+o.w*o.h,0);
+  res.usedPct=used/floor*100;
   const pad=Math.max(W,D)*0.07,fs=Math.max(W,D)/42;
   let g=`<svg viewBox="${-pad} ${-pad} ${W+2*pad} ${D+2*pad*1.6}" role="img" aria-label="Bovenaanzicht kofferbak met kratten">`;
   g+=`<rect class="s-trunk" x="0" y="0" width="${W}" height="${D}" rx="${fs*0.4}"/>`;
-  g+=`<text class="s-sub" x="${W/2}" y="${-pad*0.35}" font-size="${fs*0.8}" text-anchor="middle">achterbank · ${fmt(W)} mm breed</text>`;
+  obst.forEach(o=>{g+=`<rect class="s-arch" x="${o.x}" y="${D-o.y-o.h}" width="${o.w}" height="${o.h}"><title>Wielkast</title></rect>`});
+  g+=`<text class="s-sub" x="${W/2}" y="${-pad*0.35}" font-size="${fs*0.8}" text-anchor="middle">${folded?'voorstoelen · achterbank plat':'achterbank'} · ${fmt(W)} mm breed</text>`;
   g+=`<line class="s-dim" x1="0" y1="${D+pad*0.45}" x2="${W}" y2="${D+pad*0.45}" stroke-width="${fs*0.12}"/>`;
-  g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP</text>`;
+  g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP${+tr.openW>0?` · opening ${fmt(+tr.openW)} × ${fmt(+tr.openH)}`:''}</text>`;
   g+=`<text class="s-sub" x="${-pad*0.35}" y="${D/2}" font-size="${fs*0.8}" text-anchor="middle" transform="rotate(-90 ${-pad*0.35} ${D/2})">${fmt(D)} mm diep</text>`;
-  res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,tooTall=+c.H>+tr.h;
-    g+=`<rect class="s-crate ${tooTall?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
+  res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,bad=(H>0&&+c.H>H)||!passesOpening(c);
+    g+=`<rect class="s-crate ${bad?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
     const f=Math.min(fs*1.1,p.w/7,p.h/3.2);
     g+=`<text class="s-txt" x="${p.x+p.w/2}" y="${y+p.h/2-f*0.15}" font-size="${f}" text-anchor="middle">${esc(c.name)}</text>`;
-    g+=`<text class="s-sub" x="${p.x+p.w/2}" y="${y+p.h/2+f*0.95}" font-size="${f*0.68}" text-anchor="middle">${fmt(c.L)}×${fmt(c.W)}×${fmt(c.H)}${tooTall?' · te hoog':''}</text>`;
+    g+=`<text class="s-sub" x="${p.x+p.w/2}" y="${y+p.h/2+f*0.95}" font-size="${f*0.68}" text-anchor="middle">${fmt(c.L)}×${fmt(c.W)}×${fmt(c.H)}</text>`;
   });
   if(!valid.length)g+=`<text class="s-sub" x="${W/2}" y="${D/2}" font-size="${fs}" text-anchor="middle">Nog geen kratten. Voeg er een toe onder Kratten.</text>`;
+  obst.forEach((o,i)=>{const x=i?o.x-fs*0.3:o.x+o.w+fs*0.3;
+    g+=`<text class="s-sub" x="${x}" y="${D-o.y-o.h/2}" font-size="${fs*0.6}" text-anchor="${i?'end':'start'}" dominant-baseline="middle">wielkast</text>`});
   g+='</svg>';
   $('#trunkFig').innerHTML=g;
   const notes=[];
   if(valid.length){
-    notes.push(res.left.length?['bad',`Past niet: ${res.left.map(x=>esc(x.c.name)).join(', ')}.`]:['ok',`Alle kratten passen op de vloer (${fmt(res.usedPct)}% bezet).`]);
-    valid.filter(c=>+c.H>+tr.h).forEach(c=>notes.push(['bad',`${esc(c.name)} is ${fmt(c.H-tr.h)} mm te hoog.`]));
-    const free=W*D-used;if(!res.left.length)notes.push(['',`Vrije vloer: ${fmt(free/1e6,2)} m², handig voor een losse tas of kabelhaspel.`]);
+    notes.push(res.left.length?['bad',`Past niet op de vloer: ${res.left.map(x=>esc(x.c.name)).join(', ')}.${folded?'':' Met de achterbank plat is er meer ruimte.'}`]:['ok',`Alle kratten passen op de vloer (${fmt(res.usedPct)}% bezet).`]);
+    if(H>0)valid.filter(c=>+c.H>H).forEach(c=>notes.push(['bad',`${esc(c.name)} is ${fmt(c.H-H)} mm te hoog voor de bruikbare hoogte.`]));
+    valid.filter(c=>!passesOpening(c)).forEach(c=>notes.push(['bad',`${esc(c.name)} past niet door de achterklep (${fmt(+tr.openW)} × ${fmt(+tr.openH)} mm).`]));
+    if(!res.left.length)notes.push(['',`Vrije vloer: ${fmt((floor-used)/1e6,2)} m².`]);
   }else notes.push(['','Voeg een krat toe om te zien hoe alles past.']);
   $('#trunkNotes').innerHTML=notes.map(([c,t])=>`<li class="${c}">${t}</li>`).join('');
+  res.tooTall=valid.filter(c=>(H>0&&+c.H>H)||!passesOpening(c)).length;
   return res;
+}
+function renderTrunkForm(){
+  const tr=S().trunk,car=CARS[tr.model],est=k=>(tr.est||[]).includes(k)?' <span class="est" title="Schatting: meet dit na">≈ schatting</span>':'';
+  const f=(k,label)=>`<div class="field"><label for="tr-${k}">${label}${est(k)}</label><input type="number" step="any" id="tr-${k}" value="${tr[k]}" data-s="set" data-k="trunk.${k}"></div>`;
+  $('#trunkForm').innerHTML=`
+    <div class="field"><label for="tr-model">Auto</label><select id="tr-model" data-act="car"><option value="">Eigen maten</option>${Object.entries(CARS).map(([k,c])=>`<option value="${k}" ${tr.model===k?'selected':''}>${c.label}</option>`).join('')}</select></div>
+    ${car?`<p class="hint">${car.note}</p>`:''}
+    <div class="seg" role="group" aria-label="Achterbank"><button data-act="seat" data-v="up" aria-pressed="${tr.seat!=='down'}">Achterbank omhoog</button><button data-act="seat" data-v="down" aria-pressed="${tr.seat==='down'}">Achterbank plat</button></div>
+    <h3>Vloer</h3>
+    <div class="dim-row">${f('w','Breedte')}${f('d','Diepte')}${f('dFolded','Diepte, bank plat')}</div>
+    <h3>Wielkasten</h3>
+    <div class="dim-row">${f('archW','Breedte ertussen')}${f('archFrom','Vanaf achterklep')}${f('archLen','Lengte')}</div>
+    <h3>Hoogte en opening</h3>
+    <div class="dim-row">${f('h','Bruikbare hoogte')}${f('openW','Opening breed')}${f('openH','Opening hoog')}</div>
+    <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep.</p>`;
 }
 function toolRect(r,fs,tall){
   const tl=r.it.tool;
@@ -884,11 +941,10 @@ function renderSettings(){
     <input type="file" id="importFile" accept=".json,application/json" hidden>
   </div>`;
 }
-function syncTrunkInputs(){const t=S().trunk;['w','d','h'].forEach(k=>{const el=$('#tr-'+k);if(el&&document.activeElement!==el)el.value=t[k]})}
 let vizQueued=false;
 function renderViz(){if(vizQueued)return;vizQueued=true;requestAnimationFrame(()=>{vizQueued=false;
   const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr)})}
-function renderAll(){syncTrunkInputs();renderCrates();renderTools();renderSettings();renderViz()}
+function renderAll(){renderTrunkForm();renderCrates();renderTools();renderSettings();renderViz()}
 
 /* ---------- interactie ---------- */
 function setPath(obj,path,v){const ks=path.split('.');let o=obj;for(let i=0;i<ks.length-1;i++)o=o[ks[i]];o[ks[ks.length-1]]=v}
@@ -896,13 +952,20 @@ function readVal(el){if(el.type==='checkbox')return el.checked;if(el.type==='num
 document.addEventListener('input',e=>{
   const el=e.target;if(!el.dataset||!el.dataset.s)return;
   const v=readVal(el),{s,id,k}=el.dataset;
-  if(s==='set')setPath(state.settings,k,v);
+  if(s==='set'){setPath(state.settings,k,v);
+    // een nagemeten waarde is geen schatting meer
+    if(k.startsWith('trunk.')){const tr=S().trunk,f=k.slice(6);if((tr.est||[]).includes(f)){tr.est=tr.est.filter(x=>x!==f);const e2=el.closest('.field')&&el.closest('.field').querySelector('.est');if(e2)e2.remove()}}}
   else if(s==='crate'){const c=state.crates.find(x=>x.id===id);if(c)c[k]=v}
   else if(s==='tool'){const t=state.tools.find(x=>x.id===id);if(t)t[k]=v}
   scheduleSave();renderViz();
 });
 document.addEventListener('change',e=>{
   const el=e.target;if(!el.dataset)return;
+  if(el.dataset.act==='car'){
+    const car=CARS[el.value],tr=S().trunk;tr.model=el.value;
+    if(car){Object.keys(car).forEach(k=>{if(k!=='label'&&k!=='note')tr[k]=Array.isArray(car[k])?car[k].slice():car[k]})}else tr.est=[];
+    renderTrunkForm();renderViz();scheduleSave();toast(car?`Maten van de ${car.label} ingevuld.`:'Eigen maten: vul ze hieronder in.');return;
+  }
   if(el.dataset.act==='toggleex'){el.checked?excluded.delete(el.dataset.id):excluded.add(el.dataset.id);renderViz();return}
   if(el.id==='importFile'&&el.files&&el.files[0]){
     el.files[0].text().then(txt=>{const d=JSON.parse(txt);if(!d||!Array.isArray(d.tools))throw 0;
@@ -931,6 +994,7 @@ document.addEventListener('click',async e=>{
   else if(act==='addtool'){const t={id:uid(),name:'',cat:CATS[0],l:0,w:0,h:0,qty:1,crate:state.crates.length===1?state.crates[0].id:''};state.tools.push(t);renderTools();renderViz();scheduleSave();
     const el=document.getElementById('tn-'+t.id);if(el)el.focus()}
   else if(act==='deltool'){state.tools=state.tools.filter(t=>t.id!==id);renderTools();renderViz();scheduleSave()}
+  else if(act==='seat'){S().trunk.seat=b.dataset.v;renderTrunkForm();renderViz();scheduleSave()}
   else if(act==='machine'){S().machine=b.dataset.v;S().labels=b.dataset.v==='laser';renderSettings();renderViz();scheduleSave()}
   else if(act==='sample'){loadSample()}
   else if(act==='export'){try{await saveFile('kofferbakkratten-gegevens.json',JSON.stringify(state,null,2),'application/json');toast('Gegevens opgeslagen.')}catch(err){if(err&&err.code!=='declined')toast('Opslaan lukt hier niet.')}}
