@@ -148,6 +148,8 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 .s-trunk{fill:var(--panel);stroke:var(--ink);stroke-width:2}
 .s-arch{fill:var(--line-strong)}
 .s-slope{fill:var(--line);opacity:.6}
+.s-base{fill:var(--ply);fill-opacity:.35;stroke:var(--ply-edge);stroke-width:2}
+.s-base-in{fill:var(--panel);fill-opacity:.6}
 .est{font-size:11px;color:var(--warn);font-weight:600;white-space:nowrap}
 .s-crate{fill:var(--ply);stroke:var(--ply-edge);stroke-width:2}
 .s-crate.over{fill:var(--bad-soft);stroke:var(--bad)}
@@ -256,7 +258,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 const CATS=['Accutol / boor','Zaag','Schuurmachine','Accu & lader','Accessoires','Handgereedschap','Overig'];
 const BAK_CATS=['Accu & lader','Accessoires','Handgereedschap'];
 const DEF={t:9,machine:'laser',kerf:0.2,bit:6,finger:30,clearance:10,gap:6,labels:true,handleW:110,handleH:32,
-  binT:6,binFinger:20,dividerH:0,
+  binT:6,binFinger:20,dividerH:0,base:{type:'geen',size:'heel',H:80},
   laserBed:[813,508],cncSheet:[2440,1220],trunk:{model:'',w:1000,d:850,h:450,archW:0,archFrom:200,archLen:400,dFolded:0,dTop:0,seat:'up',openW:0,openH:0,est:[]}};
 /* Bekende auto's. est = velden die geschat zijn en nagemeten moeten worden. */
 const CARS={
@@ -285,6 +287,7 @@ function S(){return state.settings}
 function normalize(d){
   const s=Object.assign(clone(DEF),d&&d.settings||{});
   s.trunk=Object.assign(clone(DEF.trunk),d&&d.settings&&d.settings.trunk||{});
+  s.base=Object.assign(clone(DEF.base),d&&d.settings&&d.settings.base||{});
   return {v:1,settings:s,crates:Array.isArray(d&&d.crates)?d.crates:[],tools:Array.isArray(d&&d.tools)?d.tools:[]};
 }
 function vakOf(t){return t.vak||(BAK_CATS.includes(t.cat)?'bak':'schot')}
@@ -544,7 +547,10 @@ function fitCrate(c){
   const s=S(),t=+s.t,cl=+s.clearance,k=shapeK(c);
   const items=toolItems(crateTools(c));if(!items.length)return false;
   const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
-  const tg=trunkGeom(),inTrunk=(L,W,H)=>(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W,maxD:tg.depthAt(H)}],tg.W,tg.D,tg.obst,0).placed.length===1;
+  const tg=trunkGeom(),bg=baseGeom(tg),inTrunk=(L,W,H)=>{
+    if(bg){const R=bg.inner;if((!tg.H||H+bg.z<=tg.H)&&packTrunk([{w:L,h:W,maxD:tg.depthAt(H+bg.z)-R.y}],R.w,R.h,[],0).placed.length)return true;
+      return(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W,maxD:tg.depthAt(H)}],tg.W,tg.D,tg.obst.concat([{x:bg.x,y:bg.y,w:bg.w,h:bg.h}]),0).placed.length===1}
+    return(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W,maxD:tg.depthAt(H)}],tg.W,tg.D,tg.obst,0).placed.length===1};
   const minW=Math.ceil((Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+cl)/10)*10;
   let best=null;
   for(let W=Math.max(minW,4*t+30);W<=1600;W+=10){
@@ -734,6 +740,7 @@ function nestAll(){
   const parts=[];
   state.crates.filter(c=>!excluded.has(c.id)&&crateValid(c)).forEach(c=>
     cratePanels(c).concat(binPanels(c)).forEach(p=>{const g=panelGeom(p);parts.push({w:g.w,h:g.h,g,crate:c,t:p.t,area:p.w*p.h})}));
+  if(!excluded.has('base'))basePanels(baseGeom(trunkGeom())).forEach(p=>{const g=panelGeom(p);parts.push({w:g.w,h:g.h,g,crate:{name:'Basis'},t:p.t,area:p.w*p.h})});
   const fits=p=>(p.w<=SW-2*m&&p.h<=SH-2*m)||(p.h<=SW-2*m&&p.w<=SH-2*m);
   const filled=r=>r.placed.reduce((a,p)=>a+p.w*p.h,0);
   const thick=[...new Set(parts.map(p=>p.t))].sort((a,b)=>b-a);
@@ -814,6 +821,23 @@ function packTrunk(rects,W,D,obst,gap){
   });
   return{placed,left};
 }
+/* Basis in de kofferbak: een vloerbord of een grote bak waar de kratten in staan. y = 0 is de achterklep. */
+function baseGeom(tg){
+  const s=S(),b=s.base||{},t=+s.t;
+  if(!b.type||b.type==='geen')return null;
+  const m=5,bak=b.type==='bak',Hb=bak?Math.max(+b.H||80,3*t+20):t;
+  const full=tg.W-2*m,w=b.size==='heel'?Math.floor(full):Math.floor(full/2-2.5);
+  const x=b.size==='rechts'?tg.W-m-w:m,y=m;
+  const h=Math.floor(Math.min(tg.D,tg.depthAt(Hb))-m-y);
+  const inner=bak?{x:x+t,y:y+t,w:w-2*t,h:h-2*t}:{x,y,w,h};
+  return{type:b.type,x,y,w,h,H:Hb,inner,z:t,t};
+}
+function basePanels(bg){
+  if(!bg)return[];
+  const s=S(),t=+s.t;
+  if(bg.type==='bak')return boxPanels(bg.w,bg.h,bg.H,t,+s.finger,false).map(p=>Object.assign(p,{name:'basisbak · '+p.name}));
+  return[{name:'vloerbord',kind:'bottom',w:bg.w,h:bg.h,t,pts:[[0,0],[bg.w,0],[bg.w,bg.h],[0,bg.h]],holes:[]}];
+}
 function passesOpening(c){
   const tr=S().trunk,ow=+tr.openW,oh=+tr.openH;if(!(ow>0&&oh>0))return true;
   const[a,b]=[+c.L,+c.W,+c.H].sort((x,y)=>x-y);
@@ -823,14 +847,25 @@ function renderTrunk(){
   const tr=S().trunk,tg=trunkGeom(),{W,D,H,obst,folded}=tg;
   const valid=state.crates.filter(c=>c.L>0&&c.W>0);
   // Kratten met een vaste plek (gesleept in 3D) staan stil; de rest wordt eromheen geschikt.
+  // Met een basis gaan kratten eerst daarin (een plaatdikte hoger), wat niet past komt ernaast op de vloer.
+  const bg=baseGeom(tg),bgRect=bg?{x:bg.x,y:bg.y,w:bg.w,h:bg.h}:null;
+  const inBase=p=>bg&&p.x>=bg.inner.x-1&&p.y>=bg.inner.y-1&&p.x+p.w<=bg.inner.x+bg.inner.w+1&&p.y+p.h<=bg.inner.y+bg.inner.h+1;
   const fixed=valid.filter(c=>c.pos).map(c=>{const rot=!!c.pos.rot;
     return{x:+c.pos.x||0,y:+c.pos.y||0,w:rot?+c.W:+c.L,h:rot?+c.L:+c.W,rot,it:{c},fixed:true}});
-  fixed.forEach(p=>{const c=p.it.c,maxD=Math.min(D,tg.depthAt(+c.H));
+  fixed.forEach(p=>{const c=p.it.c;p.z=inBase(p)?bg.z:0;const maxD=Math.min(D,tg.depthAt(+c.H+p.z));
     const out=p.x<-1||p.y<-1||p.x+p.w>W+1||p.y+p.h>maxD+1;
-    const ov=obst.concat(fixed.filter(q=>q!==p)).some(o=>p.x<o.x+o.w-1&&p.x+p.w>o.x+1&&p.y<o.y+o.h-1&&p.y+p.h>o.y+1);
-    p.bad=out||ov;p.why=out?(p.y+p.h>maxD+1&&p.y+p.h<=D+1?'te diep voor de schuine rugleuning':'buiten de kofferbak'):ov?'overlapt een wielkast of andere krat':''});
-  const res=packTrunk(valid.filter(c=>!c.pos).map(c=>({w:+c.L,h:+c.W,c,maxD:tg.depthAt(+c.H)})),W,D,obst.concat(fixed),5);
-  res.placed=fixed.concat(res.placed);
+    const ov=obst.concat(fixed.filter(q=>q!==p),bg&&!p.z?[bgRect]:[]).some(o=>p.x<o.x+o.w-1&&p.x+p.w>o.x+1&&p.y<o.y+o.h-1&&p.y+p.h>o.y+1);
+    p.bad=out||ov;p.why=out?(p.y+p.h>maxD+1&&p.y+p.h<=D+1?'te diep voor de schuine rugleuning':'buiten de kofferbak'):ov?(bg&&!p.z?'staat half op de basis of overlapt een andere krat':'overlapt een wielkast of andere krat'):''});
+  let left=valid.filter(c=>!c.pos).map(c=>({w:+c.L,h:+c.W,c}));
+  const inB=[];
+  if(bg){
+    const R=bg.inner,ob=fixed.filter(p=>p.z).map(p=>({x:p.x-R.x,y:p.y-R.y,w:p.w,h:p.h}));
+    const r1=packTrunk(left.map(r=>({w:r.w,h:r.h,c:r.c,maxD:tg.depthAt(+r.c.H+bg.z)-R.y})),R.w,R.h,ob,5);
+    r1.placed.forEach(p=>{p.x+=R.x;p.y+=R.y;p.z=bg.z;inB.push(p)});left=r1.left;
+  }
+  const r2=packTrunk(left.map(r=>({w:r.w,h:r.h,c:r.c,maxD:tg.depthAt(+r.c.H)})),W,D,obst.concat(fixed,bg?[bgRect]:[],inB),5);
+  r2.placed.forEach(p=>{p.z=0});
+  const res={placed:fixed.concat(inB,r2.placed),left:r2.left};
   res.badFixed=fixed.filter(p=>p.bad);
   const used=res.placed.reduce((a,p)=>a+p.w*p.h,0),floor=W*D-obst.reduce((a,o)=>a+o.w*o.h,0);
   res.usedPct=used/floor*100;
@@ -839,11 +874,13 @@ function renderTrunk(){
   g+=`<rect class="s-trunk" x="0" y="0" width="${W}" height="${D}" rx="${fs*0.4}"/>`;
   if(tg.sloped)g+=`<rect class="s-slope" x="0" y="0" width="${W}" height="${D-tg.dTop}"/><line class="s-dim" x1="0" y1="${D-tg.dTop}" x2="${W}" y2="${D-tg.dTop}" stroke-dasharray="${fs*0.4} ${fs*0.3}" stroke-width="${fs*0.08}"/><text class="s-sub" x="${W-fs*0.3}" y="${D-tg.dTop-fs*0.35}" font-size="${fs*0.6}" text-anchor="end">rugleuning op ${fmt(H)} mm hoogte · ${fmt(tg.dTop)} mm diep</text>`;
   obst.forEach(o=>{g+=`<rect class="s-arch" x="${o.x}" y="${D-o.y-o.h}" width="${o.w}" height="${o.h}"><title>Wielkast</title></rect>`});
+  if(bg){g+=`<rect class="s-base" x="${bg.x}" y="${D-bg.y-bg.h}" width="${bg.w}" height="${bg.h}"><title>${bg.type==='bak'?'Basisbak':'Vloerbord'} ${fmt(bg.w)} × ${fmt(bg.h)} mm</title></rect>`;
+    if(bg.type==='bak')g+=`<rect class="s-base-in" x="${bg.inner.x}" y="${D-bg.inner.y-bg.inner.h}" width="${bg.inner.w}" height="${bg.inner.h}"/>`}
   g+=`<text class="s-sub" x="${W/2}" y="${-pad*0.35}" font-size="${fs*0.8}" text-anchor="middle">${folded?'voorstoelen · achterbank plat':'achterbank'} · ${fmt(W)} mm breed</text>`;
   g+=`<line class="s-dim" x1="0" y1="${D+pad*0.45}" x2="${W}" y2="${D+pad*0.45}" stroke-width="${fs*0.12}"/>`;
   g+=`<text class="s-txt" x="${W/2}" y="${D+pad*1.1}" font-size="${fs*1.05}" text-anchor="middle">ACHTERKLEP${+tr.openW>0?` · opening ${fmt(+tr.openW)} × ${fmt(+tr.openH)}`:''}</text>`;
   g+=`<text class="s-sub" x="${-pad*0.35}" y="${D/2}" font-size="${fs*0.8}" text-anchor="middle" transform="rotate(-90 ${-pad*0.35} ${D/2})">${fmt(D)} mm diep</text>`;
-  res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,bad=p.bad||(H>0&&+c.H>H)||!passesOpening(c);
+  res.placed.forEach(p=>{const c=p.it.c,y=D-p.y-p.h,bad=p.bad||(H>0&&+c.H+p.z>H)||!passesOpening(c);
     g+=`<rect class="s-crate ${bad?'over':''}" x="${p.x}" y="${y}" width="${p.w}" height="${p.h}" rx="${fs*0.2}"/>`;
     const f=Math.min(fs*1.1,p.w/7,p.h/3.2);
     g+=`<text class="s-txt" x="${p.x+p.w/2}" y="${y+p.h/2-f*0.15}" font-size="${f}" text-anchor="middle">${esc(c.name)}</text>`;
@@ -853,32 +890,39 @@ function renderTrunk(){
   obst.forEach((o,i)=>{const x=i?o.x-fs*0.3:o.x+o.w+fs*0.3;
     g+=`<text class="s-sub" x="${x}" y="${D-o.y-o.h/2}" font-size="${fs*0.6}" text-anchor="${i?'end':'start'}" dominant-baseline="middle">wielkast</text>`});
   g+='</svg>';
-  g+=sideView(tg,res.placed);
+  g+=sideView(tg,res.placed,bg);
   $('#trunkFig').innerHTML=g;
   const notes=[];
   if(valid.length){
     notes.push(res.left.length?['bad',`Past niet op de vloer: ${res.left.map(x=>esc(x.c.name)).join(', ')}.${folded?'':' Met de achterbank plat is er meer ruimte.'}`]:['ok',`Alle kratten passen op de vloer (${fmt(res.usedPct)}% bezet).`]);
     res.badFixed.forEach(p=>notes.push(['bad',`${esc(p.it.c.name)} staat niet goed: ${p.why}. Sleep hem in de 3D-weergave, of klik op Automatisch schikken.`]));
-    if(H>0)valid.filter(c=>+c.H>H).forEach(c=>notes.push(['bad',`${esc(c.name)} is ${fmt(c.H-H)} mm te hoog voor de bruikbare hoogte.`]));
+    if(H>0)res.placed.filter(p=>+p.it.c.H+p.z>H).forEach(p=>notes.push(['bad',`${esc(p.it.c.name)} is ${fmt(+p.it.c.H+p.z-H)} mm te hoog voor de bruikbare hoogte${p.z?' (hij staat in de basis)':''}.`]));
     valid.filter(c=>!passesOpening(c)).forEach(c=>notes.push(['bad',`${esc(c.name)} past niet door de achterklep (${fmt(+tr.openW)} × ${fmt(+tr.openH)} mm).`]));
     if(!res.left.length)notes.push(['',`Vrije vloer: ${fmt((floor-used)/1e6,2)} m².`]);
     if(valid.some(c=>c.pos))notes.push(['',`${valid.filter(c=>c.pos).length} krat(ten) op een vaste plek. <button class="ghost" data-act="autopos" style="padding:0;color:var(--accent)">Automatisch schikken</button>`]);
   }else notes.push(['','Voeg een krat toe om te zien hoe alles past.']);
+  if(bg){
+    const[SW,SH]=sheetSize(),on=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10),big=basePanels(bg).some(p=>!on(p.w,p.h));
+    notes.push(['',`${bg.type==='bak'?'Basisbak':'Vloerbord'}: ${fmt(bg.w)} × ${fmt(bg.h)}${bg.type==='bak'?' × '+fmt(bg.H):''} mm. Kratten erin staan ${fmt(bg.z)} mm hoger.`]);
+    if(big)notes.push(['warn',`De basis past niet op ${S().machine==='laser'?'het werkveld':'de plaat'} van ${SW} × ${SH} mm. Snijd hem op de CNC${S().base.size==='heel'?', of kies een halve basis':''}.`]);
+    if(obst.some(o=>bg.x<o.x+o.w&&bg.x+bg.w>o.x&&bg.y<o.y+o.h&&bg.y+bg.h>o.y))notes.push(['bad','De basis overlapt de wielkasten. Kies een halve basis of pas de maten aan.']);
+  }
   $('#trunkNotes').innerHTML=notes.map(([c,t])=>`<li class="${c}">${t}</li>`).join('');
-  res.tooTall=valid.filter(c=>(H>0&&+c.H>H)||!passesOpening(c)).length+res.badFixed.length;
-  lastTrunk={res,tg};
+  res.tooTall=res.placed.filter(p=>(H>0&&+p.it.c.H+p.z>H)||!passesOpening(p.it.c)).length+res.badFixed.length;
+  lastTrunk={res,tg,bg};
   return res;
 }
 /* zijaanzicht: achterklep rechts, achterbank links */
-function sideView(tg,placed){
+function sideView(tg,placed,bg){
   const{D,H,dTop,sloped}=tg,hMax=Math.max(H||0,...placed.map(p=>+p.it.c.H),100),fs=Math.max(D,hMax)/30,pad=fs*1.6;
   let g=`<svg viewBox="${-pad} ${-pad} ${D+2*pad} ${hMax+pad*2.4}" role="img" aria-label="Zijaanzicht kofferbak" style="margin-top:12px;max-height:260px">`;
   const Y=z=>hMax-z;
   const seatTop=sloped?D-dTop:0;
   g+=`<path class="s-trunk" d="M0 ${Y(0)}H${D}V${Y(H||hMax)}H${seatTop}L0 ${Y(0)}Z" style="stroke-width:${fs*0.12}"/>`;
   if(H)g+=`<text class="s-sub" x="${D-fs*0.3}" y="${Y(H)-fs*0.4}" font-size="${fs*0.7}" text-anchor="end">hoedenplank ${fmt(H)} mm</text>`;
-  placed.forEach(p=>{const c=p.it.c,x=D-p.y-p.h,bad=(H&&+c.H>H);
-    g+=`<rect class="s-crate ${bad?'over':''}" x="${x}" y="${Y(+c.H)}" width="${p.h}" height="${+c.H}" style="fill-opacity:.75;stroke-width:${fs*0.08}"><title>${esc(c.name)}</title></rect>`});
+  if(bg)g+=`<rect class="s-base" x="${D-bg.y-bg.h}" y="${Y(bg.H)}" width="${bg.h}" height="${bg.H}" style="stroke-width:${fs*0.08}"/>`;
+  placed.forEach(p=>{const c=p.it.c,x=D-p.y-p.h,z=p.z||0,bad=(H&&+c.H+z>H);
+    g+=`<rect class="s-crate ${bad?'over':''}" x="${x}" y="${Y(+c.H+z)}" width="${p.h}" height="${+c.H}" style="fill-opacity:.75;stroke-width:${fs*0.08}"><title>${esc(c.name)}</title></rect>`});
   g+=`<text class="s-sub" x="${fs*0.3}" y="${Y(0)+fs*1.1}" font-size="${fs*0.7}">achterbank</text><text class="s-txt" x="${D}" y="${Y(0)+fs*1.1}" font-size="${fs*0.75}" text-anchor="end">ACHTERKLEP</text>`;
   g+=`<text class="s-sub" x="${D/2}" y="${-pad*0.3}" font-size="${fs*0.7}" text-anchor="middle">zijaanzicht · vloer ${fmt(D)} mm diep</text></svg>`;
   return g;
@@ -896,6 +940,12 @@ function renderTrunkForm(){
     <div class="dim-row">${f('archW','Breedte ertussen')}${f('archFrom','Vanaf achterklep')}${f('archLen','Lengte')}</div>
     <h3>Hoogte en opening</h3>
     <div class="dim-row">${f('h','Bruikbare hoogte')}${f('openW','Opening breed')}${f('openH','Opening hoog')}</div>
+    <h3>Basis in de kofferbak</h3>
+    <div class="dim-row">
+      <div class="field"><label for="tr-btype">Soort</label><select id="tr-btype" data-s="set" data-k="base.type"><option value="geen" ${S().base.type==='geen'?'selected':''}>Geen</option><option value="bord" ${S().base.type==='bord'?'selected':''}>Vloerbord</option><option value="bak" ${S().base.type==='bak'?'selected':''}>Bak</option></select></div>
+      ${S().base.type!=='geen'?`<div class="field"><label for="tr-bsize">Formaat</label><select id="tr-bsize" data-s="set" data-k="base.size"><option value="heel" ${S().base.size==='heel'?'selected':''}>Hele vloer</option><option value="links" ${S().base.size==='links'?'selected':''}>Half, links</option><option value="rechts" ${S().base.size==='rechts'?'selected':''}>Half, rechts</option></select></div>`:''}
+      ${S().base.type==='bak'?`<div class="field"><label for="tr-bh">Randhoogte</label><input type="number" step="any" id="tr-bh" value="${S().base.H}" data-s="set" data-k="base.H"></div>`:''}
+    </div>
     <p class="hint">In mm. Bruikbare hoogte = tot onder de hoedenplank, of tot het dak als die eruit gaat. Vul 0 in bij "breedte ertussen" als er geen wielkasten in de weg zitten. Diepte en wielkast meet je vanaf de achterklep. Diepte bovenin = diepte op hoedenplankhoogte; leeg of 0 als de rugleuning recht staat.</p>`;
 }
 function toolRect(r,fs,tall,bad){
@@ -1004,7 +1054,8 @@ function renderSheets(){
   $('#sheetIntro').textContent=s.machine==='laser'
     ?`Lasersnijder, werkveld ${SW} × ${SH} mm. Rood = snijden (haarlijn), blauw = graveren. Kerf van ${s.kerf} mm is al gecompenseerd. Eén set platen per plaatdikte.`
     :`CNC, plaat ${SW} × ${SH} mm. Contouren zijn de echte maat: frees ze buiten de lijn, sleuven binnen de lijn. Binnenhoeken hebben dogbones voor een frees van Ø${s.bit} mm.`;
-  $('#sheetCtl').innerHTML=state.crates.length?`<span class="hint">Meenemen:</span>`+state.crates.map(c=>`<label><input type="checkbox" id="ex-${c.id}" data-act="toggleex" data-id="${c.id}" ${excluded.has(c.id)?'':'checked'}> ${esc(c.name)}</label>`).join(''):'<span class="hint">Nog geen kratten.</span>';
+  const hasBase=!!baseGeom(trunkGeom());
+  $('#sheetCtl').innerHTML=(state.crates.length||hasBase)?`<span class="hint">Meenemen:</span>`+state.crates.map(c=>`<label><input type="checkbox" id="ex-${c.id}" data-act="toggleex" data-id="${c.id}" ${excluded.has(c.id)?'':'checked'}> ${esc(c.name)}</label>`).join('')+(hasBase?`<label><input type="checkbox" id="ex-base" data-act="toggleex" data-id="base" ${excluded.has('base')?'':'checked'}> Basis</label>`:''):'<span class="hint">Nog geen kratten.</span>';
   if(!nest.parts.length){$('#sheets').innerHTML=`<div class="empty"><b>Geen onderdelen</b><p>Voeg een krat toe of vink er een aan.</p></div>`;return nest}
   let html='';
   if(s.machine==='cnc'&&(+s.bit>Math.min(...nest.groups.map(g=>g.t))))html+=`<ul class="notes" style="padding:16px 16px 0"><li class="bad">De frees (Ø${s.bit} mm) is breder dan de dunste plaat: de sleuven voor de lipjes kunnen niet gefreesd worden. Kies een kleinere frees of dikkere bakken.</li></ul>`;
@@ -1177,13 +1228,17 @@ function trunkGroup(){
   g.add(new THREE.Mesh(seat,new THREE.MeshBasicMaterial({color:new THREE.Color(cssVar('--muted')),transparent:true,opacity:0.18,side:THREE.DoubleSide})));
   const pts=[[0,0,0],[W,0,0],[W,D,0],[0,D,0],[0,0,0],[0,0,top],[W,0,top],[W,0,0],[W,0,top],[W,yTop,top],[W,D,0],[0,D,0],[0,yTop,top],[0,0,top],[0,yTop,top],[W,yTop,top]];
   g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x,y,z])=>new THREE.Vector3(x,y,z))),line));
+  const bg=lastTrunk.bg;
+  if(bg){const bgp=new THREE.Group(),ply=mat3(cssVar('--ply')),edge=cssVar('--ply-edge');
+    basePanels(bg).forEach(p=>{const m=panelMesh(p,ply,edge);m.applyMatrix4(panelMatrix(p,bg.w,bg.h));bgp.add(m)});
+    bgp.position.set(bg.x,bg.y,0);g.add(bgp)}
   res.placed.forEach(p=>{
     const c=p.it.c,cg=crateGroup(c);
     cg.userData={kind:'crate',crateId:c.id,fx:p.x,fy:p.y,w:p.w,h:p.h,rot:p.rot};
     three.draggables.push(cg);
-    if(p.bad||(H&&+c.H>H)){const bx=new THREE.Box3().setFromObject(cg),hl=new THREE.Box3Helper(bx,new THREE.Color(cssVar('--bad')));g.add(hl)}
+    if(p.bad||(H&&+c.H+(p.z||0)>H)){const bx=new THREE.Box3().setFromObject(cg),hl=new THREE.Box3Helper(bx,new THREE.Color(cssVar('--bad')));g.add(hl)}
     // packTrunk: x over de breedte, y vanaf de achterklep; gedraaid = lengte in de diepte
-    if(p.rot){cg.rotation.z=Math.PI/2;cg.position.set(p.x+ +c.W,p.y,0)}else cg.position.set(p.x,p.y,0);
+    if(p.rot){cg.rotation.z=Math.PI/2;cg.position.set(p.x+ +c.W,p.y,p.z||0)}else cg.position.set(p.x,p.y,p.z||0);
     g.add(cg);
   });
   return g;
@@ -1194,6 +1249,8 @@ function snapPos(x,y,w,h,id){
   const others=(lastTrunk?lastTrunk.res.placed:[]).filter(p=>p.it.c.id!==id).concat(tg.obst);
   const xs=[0,tg.W-w],ys=[0,tg.D-h];
   others.forEach(o=>{xs.push(o.x+o.w+gap,o.x-gap-w,o.x,o.x+o.w-w);ys.push(o.y+o.h+gap,o.y-gap-h,o.y,o.y+o.h-h)});
+  const bg=lastTrunk&&lastTrunk.bg;
+  if(bg){const R=bg.inner;xs.push(R.x,R.x+R.w-w,bg.x-gap-w,bg.x+bg.w+gap);ys.push(R.y,R.y+R.h-h,bg.y+bg.h+gap)}
   const near=(v,list)=>{let b=v,d=S2;list.forEach(t=>{if(Math.abs(t-v)<d){d=Math.abs(t-v);b=t}});return b};
   x=Math.min(Math.max(x,0),Math.max(0,tg.W-w));y=Math.min(Math.max(y,0),Math.max(0,tg.D-h));
   const sx=near(x,xs),sy=near(y,ys);
@@ -1355,6 +1412,7 @@ document.addEventListener('change',e=>{
   if(s==='crate'&&k==='name'){renderTools();fill3dSelect()}
   if(s==='tool'&&(k==='crate'||k==='cat'||k==='group'))renderTools();
   if(s==='set'&&k==='t')renderSettings();
+  if(s==='set'&&(k==='base.type'||k==='base.size'))renderTrunkForm();
 });
 document.addEventListener('keydown',e=>{
   if((e.key==='Delete'||e.key==='Backspace')&&three&&three.selected&&!/INPUT|SELECT|TEXTAREA/.test((document.activeElement||{}).tagName||'')){e.preventDefault();deleteSelected()}
