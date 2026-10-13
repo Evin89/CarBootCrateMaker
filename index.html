@@ -1109,7 +1109,7 @@ function crateVizHTML(c){
     [...new Set(items.filter(i=>i.H>inn.H).map(i=>i.tool))].forEach(tl=>notes.push(['warn',`${esc(tl.name)} steekt ${fmt(tl.h-inn.H)} mm boven de rand uit.`]));
     if(items.length&&!notes.length)notes.push(['ok','Alles past, met '+cl+' mm speling rondom.']);
   }
-  if(!items.length)notes.push(['','Nog geen gereedschap in deze krat. Kies hem in de kolom Krat.']);
+  if(!items.length)notes.push(['',layoutOn(c)?'Lege krat: geef de maten zelf op en verdeel hem eventueel in vakken met Verdeel. Gereedschap toewijzen kan altijd nog in de kolom Krat.':'Lege krat: geef de maten zelf op. Gereedschap toewijzen kan in de kolom Krat.']);
   const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
   const big=cratePanels(c).filter(p=>!onSheet(p.w,p.h));
   if(big.length)notes.push(['bad',`${big.length} paneel/panelen passen niet op ${s.machine==='laser'?'het werkveld':'de plaat'} van ${SW} × ${SH} mm (o.a. ${esc(big[0].name)}, ${fmt(big[0].w)} × ${fmt(big[0].h)}). Maak de krat kleiner, verdeel de inhoud over twee kratten of gebruik de CNC.`]);
@@ -1161,7 +1161,9 @@ function renderCrates(){
       ${crateTools(c).some(t=>vakOf(t)==='bak')?`<label style="align-self:center" title="Elke losse bak krijgt een eigen vak met schotten, zodat je ziet waar hij hoort"><input type="checkbox" id="cb-${c.id}" ${c.binSlots?'checked':''} data-s="crate" data-id="${c.id}" data-k="binSlots"> schotten rond bakken</label>`:''}
       <span class="spacer"></span>
       <button data-act="swap" data-id="${c.id}" title="Lengte en breedte omwisselen">↻ L/B</button>
-      <button data-act="fit" data-id="${c.id}" title="Zoekt de kleinste krat in de gekozen vorm waarin het toegewezen gereedschap past, bij voorkeur passend op de plaat en in de kofferbak">Maat op inhoud</button>
+      ${crateTools(c).length?`<button data-act="fit" data-id="${c.id}" title="Zoekt de kleinste krat in de gekozen vorm waarin het toegewezen gereedschap past, bij voorkeur passend op de plaat en in de kofferbak">Maat op inhoud</button>`:`<div class="field"><label for="cc-${c.id}">Vakken breed</label><input type="number" step="1" min="1" id="cc-${c.id}" value="${c.cols||1}" data-s="crate" data-id="${c.id}" data-k="cols" style="width:56px"></div>
+      <div class="field"><label for="cr-${c.id}">Vakken diep</label><input type="number" step="1" min="1" id="cr-${c.id}" value="${c.rows||1}" data-s="crate" data-id="${c.id}" data-k="rows" style="width:56px"></div>
+      <button data-act="crategrid" data-id="${c.id}" title="Verdeel de lege krat in gelijke vakken; schuif de schotten daarna bij in de 3D-weergave">Verdeel</button>`}
       <button class="ghost" data-act="delcrate" data-id="${c.id}">Verwijder</button>
     </div>
     <div class="crate-body" id="cv-${c.id}"></div>
@@ -1836,6 +1838,7 @@ document.addEventListener('change',e=>{
   if(s==='crate'&&k==='binSlots'){const c=state.crates.find(x=>x.id===el.dataset.id);if(c&&c.manual){delete c.manual;scheduleSave();renderViz();toast('Indeling opnieuw automatisch gemaakt, met de nieuwe schotten.')}}
   if(s==='tool'&&k==='vak')renderCrates();
   if(s==='tool'&&(k==='crate'||k==='cat'||k==='group'))renderTools();
+  if(s==='tool'&&k==='crate')renderCrates();
   if(s==='set'&&k==='t')renderSettings();
   if(s==='set'&&(k==='base.type'||k==='base.size'))renderTrunkForm();
 });
@@ -1858,6 +1861,18 @@ document.addEventListener('click',async e=>{
   else if(act==='v3cross'){addDivider('cross')}
   else if(act==='v3sub'){addDivider('sub')}
   else if(act==='v3del'){deleteSelected()}
+  else if(act==='crategrid'){
+    const c=state.crates.find(x=>x.id===id);if(!c)return;
+    if(!layoutOn(c))c.layout='vakken';
+    const t=+S().t,cols=Math.max(1,Math.round(+c.cols||1)),rows=Math.max(1,Math.round(+c.rows||1));
+    editManual(c,m=>{
+      const cw=(c.L-2*t-(cols-1)*t)/cols,rh=(c.W-2*t-(rows-1)*t)/rows;
+      m.cross=[];for(let k=1;k<cols;k++)m.cross.push(Math.round(t+k*cw+(k-1)*t));
+      m.subs=[];baysOf(c,m.cross.map(x=>({x}))).forEach(b=>{for(let k=1;k<rows;k++)m.subs.push({x:(b.x0+b.x1)/2,y:Math.round(t+k*rh+(k-1)*t)})});
+      m.ends=[];
+    });
+    renderCrates();renderViz();toast(`${c.name} verdeeld in ${cols} × ${rows} vakken.`);
+  }
   else if(act==='basegrid'){
     editBase((m,lay,bg)=>{
       const t=bg.t,cols=Math.max(1,Math.round(+S().base.cols||1)),rows=Math.max(1,Math.round(+S().base.rows||1));
