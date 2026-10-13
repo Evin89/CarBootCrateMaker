@@ -635,7 +635,7 @@ def run_gui():
     e_view.addItems(["In elkaar (3D)", "Plat op platen"])
     e_svg = QtGui.QCheckBox("SVG-snijbestanden opslaan")
     e_svg.setChecked(True)
-    default_dir = os.path.join(os.path.expanduser("~"), "Documents", "carbootcratemaker", "snijbestanden")
+    default_dir = os.path.join(os.path.expanduser("~"), "Documents", "GitHub", "carbootcratemaker", "snijbestanden")
     e_dir = QtGui.QLineEdit(App.ParamGet(PARAM_PATH).GetString("dir", default_dir))
     b_dir = QtGui.QPushButton("Bladeren…")
     row = QtGui.QHBoxLayout()
