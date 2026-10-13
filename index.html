@@ -435,7 +435,20 @@ function buildComps(c){
   return{comps,notes};
 }
 /* vakken in stroken: dwarsschotten tussen stroken, tussenschotten binnen een strook */
-function arrange(c,built){
+/* Eindschotten sluiten een vak af in de lengte. list: [{x,y}] met x = voorkant van het schot en y = een punt in het vak. */
+function endsIn(list,bays,subs,W,t){
+  return(list||[]).map(e=>{
+    const dist=b=>+e.x<b.x0?b.x0-e.x:+e.x>b.x1?e.x-b.x1:0;
+    const bi=bays.reduce((m,b,k)=>dist(b)<dist(bays[m])?k:m,0),b=bays[bi];
+    const inBay=subs.map((sd,i)=>({sd,i})).filter(o=>o.sd.bay===bi).sort((p,q)=>p.sd.y-q.sd.y);
+    let ys=t,ye=W-t,s0=-1,s1=-1;
+    inBay.forEach(o=>{if(o.sd.y+t<=+e.y+0.5){ys=o.sd.y+t;s0=o.i}});
+    for(const o of inBay){if(o.sd.y>=+e.y-0.5){ye=o.sd.y;s1=o.i;break}}
+    if(ye-ys<30||b.x1-b.x0<t+40)return null;
+    return{x:Math.min(Math.max(+e.x,b.x0+20),b.x1-t-20),ys,ye,s0,s1,bay:bi};
+  }).filter(Boolean);
+}
+function arrange(c,built,tight){
   const t=+S().t,Li=c.L-2*t,Wi=c.W-2*t;
   const items=built.comps.map(cp=>({w:cp.w,h:cp.h,cp}));
   const len=r=>r.placed.reduce((m,p)=>Math.max(m,p.y+p.h),0);
@@ -443,15 +456,20 @@ function arrange(c,built){
   const res=tries.sort((a,b)=>a.left.length-b.left.length||len(a)-len(b))[0];
   const ys=[...new Set(res.placed.map(p=>p.y))].sort((a,b)=>a-b);
   const shelves=ys.map(y=>{const its=res.placed.filter(p=>p.y===y).sort((a,b)=>a.x-b.x);return{y,h:Math.max(...its.map(p=>p.h)),its}});
-  const cross=[],subs=[];
+  const cross=[],subs=[],bays=[],endsRaw=[];
   shelves.forEach((sh,i)=>{
     const last=i===shelves.length-1;
-    sh.x0=t+sh.y;sh.x1=last?c.L-t:t+sh.y+sh.h;
+    sh.x0=t+sh.y;sh.x1=last?c.L-t:t+sh.y+sh.h;bays.push({x0:sh.x0,x1:sh.x1});
     if(!last)cross.push({x:sh.x1});
-    sh.its.forEach((p,k)=>{if(k<sh.its.length-1)subs.push({y:t+p.x+p.w,xs:sh.x0,xe:sh.x1,bay:i,startWall:i===0?'L':'cross',endWall:last?'R':'cross'})});
+    sh.its.forEach((p,k)=>{
+      const yEnd=t+p.x+p.w;
+      // strak: ook een schot na het laatste vak in de strook, en een eindschot als het vak korter is dan de strook
+      if(k<sh.its.length-1||(tight&&c.W-t-yEnd>=t+15))subs.push({y:yEnd,xs:sh.x0,xe:sh.x1,bay:i,startWall:i===0?'L':'cross',endWall:last?'R':'cross'});
+      if(tight&&sh.x1-(sh.x0+p.h)>=t+15)endsRaw.push({x:sh.x0+p.h,y:t+p.x+p.w/2});
+    });
   });
   const comps=res.placed.map(p=>Object.assign({},p.it.cp,{X:t+p.y,Y:t+p.x,SX:p.h,SY:p.w}));
-  return{cross,subs,comps,left:res.left.map(i=>i.cp)};
+  return{cross,subs,ends:tight?endsIn(endsRaw,bays,subs,c.W,t):[],comps,left:res.left.map(i=>i.cp)};
 }
 const layoutCache=new Map();
 function crateLayout(c){
@@ -465,7 +483,7 @@ function crateLayout(c){
 function binKey(label){return'b:'+String(label).toLowerCase()}
 function autoLayout(c){
   const s=S(),t=+s.t,cl=+s.clearance,bt=+s.binT||6,Hi=c.H-t;
-  const built=buildComps(c),ar=arrange(c,built);
+  const built=buildComps(c),ar=arrange(c,built,!!c.binSlots);
   ar.Hd=(+s.dividerH>0)?Math.min(+s.dividerH,Hi):Hi;
   ar.notes=built.notes.slice();
   ar.tools=[];ar.bins=[];
@@ -501,7 +519,8 @@ function manualLayout(c){
     if(cp.kind==='schot')cp.items.forEach(it=>{const id=it.tool.id,n=cnt[id]=(cnt[id]||0)+1;expected.push({key:`t:${id}:${n}`,kind:'tool',w:it.w,h:it.h,it,name:it.tool.name})});
     else cp.bins.forEach(b=>expected.push({key:binKey(b.label),kind:'bin',w:b.w,h:b.h,bin:b,name:'bak '+b.label}));
   });
-  const divRects=cross.map(d=>({x:d.x,y:t,w:t,h:W-2*t})).concat(subs.map(d=>({x:d.xs,y:d.y,w:d.xe-d.xs,h:t})));
+  const ends=endsIn(m.ends,bays,subs,W,t);
+  const divRects=cross.map(d=>({x:d.x,y:t,w:t,h:W-2*t})).concat(subs.map(d=>({x:d.xs,y:d.y,w:d.xe-d.xs,h:t})),ends.map(e=>({x:e.x,y:e.ys,w:t,h:e.ye-e.ys})));
   const rects=[],missing=[];
   expected.forEach(e=>{const p=m.items&&m.items[e.key];
     if(p){const rot=!!p.rot;rects.push(Object.assign({},e,{X:+p.X,Y:+p.Y,SX:rot?e.h:e.w,SY:rot?e.w:e.h,rot}))}else missing.push(e)});
@@ -518,14 +537,14 @@ function manualLayout(c){
     r.bad=out||ov;
     if(r.bad)notes.push(['bad',`${esc(r.name)} ${out?'steekt buiten de krat':'overlapt een schot of ander onderdeel'}.`]);
   });
-  return{manual:true,Hd,cross,subs,comps:[],left:[],notes,
+  return{manual:true,Hd,cross,subs,ends,comps:[],left:[],notes,
     tools:rects.filter(r=>r.kind==='tool').map(r=>({X:r.X,Y:r.Y,SX:r.SX,SY:r.SY,it:r.it,key:r.key,rot:r.rot,bad:r.bad})),
     bins:rects.filter(r=>r.kind==='bin').map(r=>({key:r.key,label:r.bin.label,X:r.X,Y:r.Y,L:r.SX,W:r.SY,H:r.bin.H,rot:r.rot,bad:r.bad,
       tools:fillRect(r.bin.items,r.X+bt,r.Y+bt,r.SX-2*bt,r.SY-2*bt,cl/2,cl).placed}))};
 }
 /* Huidige indeling (automatisch of handmatig) vastleggen als handmatig, dan fn(m) toepassen. */
 function editManual(c,fn){
-  const lay=crateLayout(c),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y})),items:{}};
+  const lay=crateLayout(c),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y})),ends:(lay.ends||[]).map(e=>({x:e.x,y:(e.ys+e.ye)/2})),items:{}};
   lay.tools.forEach(r=>{m.items[r.key]={X:Math.round(r.X),Y:Math.round(r.Y),rot:!!r.rot}});
   lay.bins.forEach(b=>{m.items[b.key]={X:Math.round(b.X),Y:Math.round(b.Y),rot:!!b.rot}});
   const was=!!c.manual;
@@ -643,10 +662,22 @@ function dividerPanels(c,lay){
     const pick=(order,wall)=>{for(const b of order){if(wall!=='cross'&&hits(sd.y,b))continue;return b}return null};
     const st=pick([A,B],sd.startWall),en=pick([B,A],sd.endWall);
     const p={xs:sd.xs,y:sd.y,name:'tussenschot '+(j+1),kind:'sub',w:len+2*t,h:Hd+t,t,pts:tabbedRect(len,Hd,t,bt,en?[en]:[],st?[st]:[]),holes:[]};
-    panels.push(p);
+    sd.panel=p;panels.push(p);
     bt.forEach(([a,b])=>holes.bottom.push([sd.xs+a,sd.y,sd.xs+b,sd.y+t]));
     if(st){const h=[sd.y,t+st[0],sd.y+t,t+st[1]];if(sd.startWall==='L')holes.left.push(h);else lay.cross[sd.bay-1].panel.holes.push(h)}
     if(en){const h=[sd.y,t+en[0],sd.y+t,t+en[1]];if(sd.endWall==='R')holes.right.push(h);else lay.cross[sd.bay].panel.holes.push(h)}
+  });
+  // eindschotten: lijf over de breedte van het vak, lipjes in de tussenschotten of in voor- en achterwand
+  (lay.ends||[]).forEach((ed,j)=>{
+    const len=ed.ye-ed.ys,bt=btabs(len);
+    const p={x:ed.x,ys:ed.ys,name:'eindschot '+(j+1),kind:'end',w:len+2*t,h:Hd+t,t,pts:tabbedRect(len,Hd,t,bt,[B],[A]),holes:[]};
+    panels.push(p);
+    bt.forEach(([a,b])=>holes.bottom.push([ed.x,ed.ys+a,ed.x+t,ed.ys+b]));
+    const into=(si,band,wall)=>{
+      if(si<0){holes[wall].push([ed.x,t+band[0],ed.x+t,t+band[1]]);return}
+      const sd=lay.subs[si];sd.panel.holes.push([ed.x-sd.xs+t,t+band[0],ed.x-sd.xs+2*t,t+band[1]]);
+    };
+    into(ed.s0,A,'front');into(ed.s1,B,'back');
   });
   return{panels,holes};
 }
@@ -847,10 +878,10 @@ function baseAuto(bg){
   const t=bg.t,m=5,cs=state.crates.filter(c=>c.L>0&&c.W>0&&!c.pos&&crateValid(c));
   const key=JSON.stringify([bg,cs.map(c=>[c.id,c.L,c.W,c.H])]);
   if(baseAutoCache.has(key))return baseAutoCache.get(key);
-  const ar=arrange({L:bg.w,W:bg.h},{comps:cs.map(c=>({w:+c.W+2*m,h:+c.L+2*m,crate:c,label:c.name}))});
+  const ar=arrange({L:bg.w,W:bg.h},{comps:cs.map(c=>({w:+c.W+2*m,h:+c.L+2*m,crate:c,label:c.name}))},true);
   const placed=ar.comps.map(cp=>{const c=cp.crate,w=cp.SX-2*m,h=cp.SY-2*m;
     return{x:bg.x+cp.X+m,y:bg.y+cp.Y+m,w,h,rot:Math.abs(w-+c.L)>0.5,it:{c},z:t,inBaseAuto:true}});
-  const out={cross:ar.cross,subs:ar.subs,Hd:bg.H-t,placed,left:ar.left.map(cp=>cp.crate)};
+  const out={cross:ar.cross,subs:ar.subs,ends:ar.ends,Hd:bg.H-t,placed,left:ar.left.map(cp=>cp.crate)};
   if(baseAutoCache.size>50)baseAutoCache.clear();
   baseAutoCache.set(key,out);
   return out;
@@ -859,19 +890,20 @@ function baseLayout(bg){
   const b=S().base,t=bg.t,L=bg.w;
   if(b.auto)return baseAuto(bg);
   const cross=(b.cross||[]).map(Number).filter(x=>x>=t+10&&x<=L-2*t-10).sort((p,q)=>p-q).filter((x,i,a)=>!i||x-a[i-1]>=t+10).map(x=>({x}));
-  return{cross,subs:subsInBays(b.subs,baysOf({L},cross),bg.h,t),Hd:bg.H-t};
+  const bays=baysOf({L},cross),subs=subsInBays(b.subs,bays,bg.h,t);
+  return{cross,subs,ends:endsIn(b.ends,bays,subs,bg.h,t),Hd:bg.H-t};
 }
 function baseDivRects(bg){
   if(!bg||bg.type!=='bak')return[];
   const t=bg.t,lay=baseLayout(bg);
-  return lay.cross.map(d=>({x:bg.x+d.x,y:bg.y+t,w:t,h:bg.h-2*t})).concat(lay.subs.map(d=>({x:bg.x+d.xs,y:bg.y+d.y,w:d.xe-d.xs,h:t})));
+  return lay.cross.map(d=>({x:bg.x+d.x,y:bg.y+t,w:t,h:bg.h-2*t})).concat(lay.subs.map(d=>({x:bg.x+d.xs,y:bg.y+d.y,w:d.xe-d.xs,h:t})),(lay.ends||[]).map(e=>({x:bg.x+e.x,y:bg.y+e.ys,w:t,h:e.ye-e.ys})));
 }
 function basePanels(bg){
   if(!bg)return[];
   const s=S(),t=+s.t;
   if(bg.type==='bak'){
     const ps=boxPanels(bg.w,bg.h,bg.H,t,+s.finger,false),lay=baseLayout(bg);
-    if(lay.cross.length||lay.subs.length){
+    if(lay.cross.length||lay.subs.length||(lay.ends||[]).length){
       const dv=dividerPanels({L:bg.w,W:bg.h,H:bg.H,handles:false},lay);
       ps.forEach(p=>{p.holes=dv.holes[p.kind]||[]});ps.push(...dv.panels);
     }
@@ -881,9 +913,9 @@ function basePanels(bg){
 }
 function editBase(fn){
   const bg=baseGeom(trunkGeom());if(!bg||bg.type!=='bak')return;
-  const lay=baseLayout(bg),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y}))};
+  const lay=baseLayout(bg),m={cross:lay.cross.map(d=>d.x),subs:lay.subs.map(d=>({x:(d.xs+d.xe)/2,y:d.y})),ends:(lay.ends||[]).map(e=>({x:e.x,y:(e.ys+e.ye)/2}))};
   fn(m,lay,bg);
-  S().base.cross=m.cross.map(Math.round);S().base.subs=m.subs.map(d=>({x:Math.round(d.x),y:Math.round(d.y)}));
+  S().base.cross=m.cross.map(Math.round);S().base.subs=m.subs.map(d=>({x:Math.round(d.x),y:Math.round(d.y)}));S().base.ends=m.ends.map(d=>({x:Math.round(d.x),y:Math.round(d.y)}));
   if(S().base.auto){S().base.auto=false;renderTrunkForm();toast('Schotten in de basis staan nu vast; de kratten worden er omheen geplaatst.')}
   scheduleSave();renderViz();
 }
@@ -1037,6 +1069,7 @@ function crateVizHTML(c){
     });
     lay.cross.forEach(cd=>{nDiv++;g+=`<rect class="s-div" x="${cd.x}" y="${t}" width="${t}" height="${inn.W}"/>`});
     lay.subs.forEach(sd=>{nDiv++;g+=`<rect class="s-div" x="${sd.xs}" y="${sd.y}" width="${sd.xe-sd.xs}" height="${t}"/>`});
+    (lay.ends||[]).forEach(ed=>{nDiv++;g+=`<rect class="s-div" x="${ed.x}" y="${ed.ys}" width="${t}" height="${ed.ye-ed.ys}"/>`});
     if(lay.manual)notes.push(['',`Handmatige indeling, aangepast in de 3D-weergave. <button class="ghost" data-act="autolayout" data-id="${c.id}" style="padding:0;color:var(--accent)">Automatisch indelen</button>`]);
     notes.push(...lay.notes);
     if(items.length&&!lay.notes.some(n=>n[0]==='bad'))notes.push(['ok',`Alles past: ${lay.manual?'':nComp+' vak(ken), '}${nDiv} schot(ten)${nBins?`, ${nBins} losse bak(ken)`:''}.`]);
@@ -1265,6 +1298,7 @@ function panelMatrix(p,L,W){
     case'right':M.set(0,0,1,L-t, 1,0,0,0, 0,1,0,0, 0,0,0,1);break;
     case'cross':M.set(0,0,1,p.x, 1,0,0,0, 0,1,0,0, 0,0,0,1);break;
     case'sub':M.set(1,0,0,p.xs-t, 0,0,-1,p.y+t, 0,1,0,0, 0,0,0,1);break;
+    case'end':M.set(0,0,1,p.x, 1,0,0,p.ys-t, 0,1,0,0, 0,0,0,1);break;
     default:M.identity();
   }
   return M;
@@ -1282,11 +1316,11 @@ function crateGroup(c,edit){
   const s=S(),t=+s.t,bt=+s.binT||6,L=+c.L,W=+c.W,g=new THREE.Group();
   const ply=mat3(cssVar('--ply')),dark=mat3(cssVar('--ply-edge')),edge=cssVar('--ply-edge'),edgeDark=cssVar('--ink');
   const reg=(o,data)=>{o.userData=data;if(edit)three.draggables.push(o)};
-  let ci=0,si=0;
+  const idx={cross:0,sub:0,end:0};
   cratePanels(c).forEach(p=>{
-    const dv=p.kind==='cross'||p.kind==='sub',m=panelMesh(p,dv?dark:ply,dv?edgeDark:edge);
+    const dv=p.kind in idx,m=panelMesh(p,dv?dark:ply,dv?edgeDark:edge);
     m.applyMatrix4(panelMatrix(p,L,W));g.add(m);
-    if(dv)reg(m,{kind:p.kind,idx:p.kind==='cross'?ci++:si++});
+    if(dv)reg(m,{kind:p.kind,idx:idx[p.kind]++});
   });
   if(layoutOn(c)){
     const lay=crateLayout(c);
@@ -1320,9 +1354,9 @@ function trunkGroup(){
   g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x,y,z])=>new THREE.Vector3(x,y,z))),line));
   const bg=lastTrunk.bg;
   if(bg){const bgp=new THREE.Group(),ply=mat3(cssVar('--ply')),edge=cssVar('--ply-edge');
-    const dark=mat3(cssVar('--ply-edge')),ink=cssVar('--ink');let ci=0,si=0;
-    basePanels(bg).forEach(p=>{const dv=p.kind==='cross'||p.kind==='sub',m=panelMesh(p,dv?dark:ply,dv?ink:edge);m.applyMatrix4(panelMatrix(p,bg.w,bg.h));bgp.add(m);
-      if(dv){m.userData={kind:'b'+p.kind,idx:p.kind==='cross'?ci++:si++};three.draggables.push(m)}});
+    const dark=mat3(cssVar('--ply-edge')),ink=cssVar('--ink'),idx={cross:0,sub:0,end:0};
+    basePanels(bg).forEach(p=>{const dv=p.kind in idx,m=panelMesh(p,dv?dark:ply,dv?ink:edge);m.applyMatrix4(panelMatrix(p,bg.w,bg.h));bgp.add(m);
+      if(dv){m.userData={kind:'b'+p.kind,idx:idx[p.kind]++};three.draggables.push(m)}});
     bgp.position.set(bg.x,bg.y,0);g.add(bgp)}
   res.placed.forEach(p=>{
     const c=p.it.c,cg=crateGroup(c);
@@ -1374,6 +1408,9 @@ function setup3dDrag(){
     else if(u.kind==='cross'){const x0=crateLayout(c).cross[u.idx].x,x=Math.round(Math.min(Math.max(x0+dx,t+30),c.L-2*t-30)/5)*5;dx=x-x0;dy=0}
     else if(u.kind==='sub'){const y0=crateLayout(c).subs[u.idx].y,y=Math.round(Math.min(Math.max(y0+dy,t+20),c.W-2*t-20)/5)*5;dy=y-y0}
     else if(u.kind==='bcross'){const bg=lastTrunk.bg,x0=baseLayout(bg).cross[u.idx].x,x=Math.round(Math.min(Math.max(x0+dx,t+30),bg.w-2*t-30)/5)*5;dx=x-x0;dy=0}
+    else if(u.kind==='end'||u.kind==='bend'){
+      const base=u.kind==='bend',bg=base?lastTrunk.bg:null,lay=base?baseLayout(bg):crateLayout(c),ed=lay.ends[u.idx];
+      const b=baysOf(base?{L:bg.w}:c,lay.cross)[ed.bay],x=Math.round(Math.min(Math.max(ed.x+dx,b.x0+20),b.x1-t-20)/5)*5;dx=x-ed.x;dy=0}
     else if(u.kind==='bsub'){const bg=lastTrunk.bg,y0=baseLayout(bg).subs[u.idx].y,y=Math.round(Math.min(Math.max(y0+dy,t+20),bg.h-2*t-20)/5)*5;dy=y-y0}
     drag.dx=dx;drag.dy=dy;drag.moved=drag.moved||Math.abs(dx)+Math.abs(dy)>=1;
     drag.o.position.set(drag.pos0.x+dx,drag.pos0.y+dy,drag.pos0.z);three.draw();
@@ -1386,17 +1423,18 @@ function setup3dDrag(){
       if(c&&moved){c.pos={x:Math.round(u.fx+dx),y:Math.round(u.fy+dy),rot:!!u.rot};scheduleSave();renderViz()}
       return;
     }
-    if(u.kind==='bcross'||u.kind==='bsub'){
+    if(u.kind==='bcross'||u.kind==='bsub'||u.kind==='bend'){
       if(!moved){three.selected={kind:u.kind,idx:u.idx};render3d();return}
-      editBase(m=>{if(u.kind==='bcross')m.cross[u.idx]+=dx;else{m.subs[u.idx].x+=dx;m.subs[u.idx].y+=dy}});
+      editBase(m=>{if(u.kind==='bcross')m.cross[u.idx]+=dx;else if(u.kind==='bend')m.ends[u.idx].x+=dx;else{m.subs[u.idx].x+=dx;m.subs[u.idx].y+=dy}});
       three.selected=null;return;
     }
     const c=cur3d();if(!c)return;
-    if(!moved){if(u.kind==='cross'||u.kind==='sub'){three.selected={kind:u.kind,idx:u.idx};render3d()}return}
+    if(!moved){if(u.kind==='cross'||u.kind==='sub'||u.kind==='end'){three.selected={kind:u.kind,idx:u.idx};render3d()}return}
     editManual(c,m=>{
       if(u.kind==='tool'||u.kind==='bin')m.items[u.key]={X:Math.round(u.X+dx),Y:Math.round(u.Y+dy),rot:!!u.rot};
       else if(u.kind==='cross')m.cross[u.idx]=Math.round(m.cross[u.idx]+dx);
       else if(u.kind==='sub'){m.subs[u.idx].x+=dx;m.subs[u.idx].y=Math.round(m.subs[u.idx].y+dy)}
+      else if(u.kind==='end')m.ends[u.idx].x+=dx;
     });
     three.selected=null;
   };
@@ -1418,8 +1456,9 @@ function setup3dDrag(){
 }
 function deleteSelected(){
   const sel=three&&three.selected;if(!sel)return;
-  if(sel.kind==='bcross'||sel.kind==='bsub'){editBase(m=>{(sel.kind==='bcross'?m.cross:m.subs).splice(sel.idx,1)})}
-  else{const c=cur3d();if(!c)return;editManual(c,m=>{(sel.kind==='cross'?m.cross:m.subs).splice(sel.idx,1)})}
+  const list=m=>({cross:m.cross,sub:m.subs,end:m.ends})[sel.kind.replace(/^b(?=cross|sub|end)/,'')];
+  if(sel.kind[0]==='b'&&sel.kind!=='bin'){editBase(m=>{list(m).splice(sel.idx,1)})}
+  else{const c=cur3d();if(!c)return;editManual(c,m=>{list(m).splice(sel.idx,1)})}
   three.selected=null;toast('Schot verwijderd.');
 }
 /* vrije plek voor een nieuw schot in een doos van L × W met gegeven indeling en bezette rechthoeken */
