@@ -200,7 +200,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
   </section>
 
   <section id="weergave3d">
-    <div class="sec-head"><h2>3D</h2><p>Sleep een krat om hem in de kofferbak te verplaatsen, dubbelklik om hem te draaien. Sleep ernaast om het beeld te draaien, scroll om te zoomen, rechts slepen om te verschuiven.</p></div>
+    <div class="sec-head"><h2>3D</h2><p>Slepen draait het beeld, rechts slepen of Shift + slepen verschuift, scrollen zoomt naar de muis. Dubbelklik op een lege plek om daar omheen te draaien. Kratten, gereedschap en schotten sleep je om ze te verplaatsen; dubbelklik draait ze.</p></div>
     <div class="card">
       <div class="sheet-ctl">
         <label for="v3-sel">Weergave</label><select id="v3-sel"></select>
@@ -1179,7 +1179,30 @@ function init3d(){
   const sun=new THREE.DirectionalLight(0xffffff,0.55);sun.position.set(-0.6,-1,1.4);scene.add(sun);
   const controls=new THREE.OrbitControls(cam,r.domElement);
   controls.enableDamping=false;
+  controls.enableZoom=false;   // eigen zoom: naar de muis toe in plaats van naar het midden
+  controls.screenSpacePanning=true;
+  const ray3=new THREE.Raycaster();
+  const pointAt=e=>{
+    const rc=r.domElement.getBoundingClientRect();
+    ray3.setFromCamera(new THREE.Vector2(((e.clientX-rc.left)/rc.width)*2-1,-((e.clientY-rc.top)/rc.height)*2+1),cam);
+    const hit=three&&three.root?ray3.intersectObject(three.root,true).find(h=>h.object.isMesh):null;
+    if(hit)return hit.point.clone();
+    const p=new THREE.Vector3(),pl=new THREE.Plane(new THREE.Vector3(0,0,1),-controls.target.z);
+    return ray3.ray.intersectPlane(pl,p)?p:null;
+  };
+  r.domElement.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const P=pointAt(e);if(!P)return;
+    const f=Math.pow(1.0015,e.deltaY*(e.deltaMode===1?40:1));
+    const dist=cam.position.distanceTo(P);
+    if((f<1&&dist<40)||(f>1&&dist>40000))return;
+    cam.position.sub(P).multiplyScalar(f).add(P);
+    controls.target.sub(P).multiplyScalar(f).add(P);
+    controls.update();r.render(scene,cam);
+  },{passive:false});
+  r.domElement.addEventListener('contextmenu',e=>e.preventDefault());
   const draw=()=>r.render(scene,cam);
+  r.domElement.__pointAt=e=>pointAt(e);
   controls.addEventListener('change',draw);
   three={r,scene,cam,controls,draw,root:null,host,draggables:[]};
   setup3dDrag();
@@ -1310,7 +1333,7 @@ function setup3dDrag(){
   const onPlane=z=>{const p=new THREE.Vector3();return ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,0,1),-z),p)?p:null};
   // capture-fase: vóór OrbitControls, zodat het beeld niet draait tijdens het slepen
   el.addEventListener('pointerdown',e=>{
-    if(e.button!==0)return;const o=pick(e);
+    if(e.button!==0||e.shiftKey||e.ctrlKey||e.metaKey)return;const o=pick(e);
     if(!o){if(three.selected){three.selected=null;render3d()}return}
     const z=o.userData.kind==='crate'?0:+S().t,p=onPlane(z);if(!p)return;
     drag={o,u:o.userData,start:p,z,pos0:o.position.clone(),dx:0,dy:0,moved:false};
@@ -1353,7 +1376,9 @@ function setup3dDrag(){
   };
   el.addEventListener('pointerup',end);el.addEventListener('pointercancel',end);
   el.addEventListener('dblclick',e=>{
-    const o=pick(e);if(!o)return;const u=o.userData;
+    const o=pick(e);
+    if(!o){const P=el.__pointAt&&el.__pointAt(e);if(P){const d=P.clone().sub(three.controls.target);three.controls.target.add(d);three.cam.position.add(d);three.controls.update();three.draw()}return}
+    const u=o.userData;
     if(u.kind==='crate'){
       const c=state.crates.find(k=>k.id===u.crateId);if(!c)return;
       const w=u.h,h=u.w,[x,y]=snapPos(u.fx+(u.w-w)/2,u.fy+(u.h-h)/2,w,h,u.crateId);
