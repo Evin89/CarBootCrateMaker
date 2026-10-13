@@ -1108,7 +1108,7 @@ function renderTools(){
     <td><select id="tk-${t.id}" aria-label="Krat" data-s="tool" data-id="${t.id}" data-k="crate">${opts(t.crate)}</select></td>
     <td><input type="text" class="grp" id="tg-${t.id}" aria-label="Groep" list="groupList" value="${esc(t.group||'')}" placeholder="eigen vak" data-s="tool" data-id="${t.id}" data-k="group"></td>
     <td><select id="tv-${t.id}" aria-label="Vak" data-s="tool" data-id="${t.id}" data-k="vak"><option value="schot" ${vak==='schot'?'selected':''}>Schot</option><option value="bak" ${vak==='bak'?'selected':''}>Losse bak</option></select></td>
-    <td><button class="ghost" data-act="deltool" data-id="${t.id}" aria-label="Verwijder ${esc(t.name)}">×</button></td></tr>`}).join('');
+    <td style="white-space:nowrap"><button class="ghost" data-act="duptool" data-id="${t.id}" title="Kopiëren" aria-label="Kopieer ${esc(t.name)}">⧉</button><button class="ghost" data-act="deltool" data-id="${t.id}" aria-label="Verwijder ${esc(t.name)}">×</button></td></tr>`}).join('');
   const un=state.tools.filter(t=>!t.crate||!state.crates.some(c=>c.id===t.crate)).length;
   $('#toolsFoot').textContent=state.tools.length?(un?`${un} item(s) nog niet in een krat (oranje streep).`:'Alles is ingedeeld.'):'';
 }
@@ -1572,6 +1572,13 @@ document.addEventListener('click',async e=>{
     if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden.')}
   else if(act==='addtool'){const t={id:uid(),name:'',cat:CATS[0],l:0,w:0,h:0,qty:1,crate:state.crates.length===1?state.crates[0].id:''};state.tools.push(t);renderTools();renderViz();scheduleSave();
     const el=document.getElementById('tn-'+t.id);if(el)el.focus()}
+  else if(act==='duptool'){
+    const i=state.tools.findIndex(t=>t.id===id);if(i<0)return;
+    const copy=Object.assign(clone(state.tools[i]),{id:uid(),name:(state.tools[i].name||'Gereedschap')+' (kopie)'});
+    state.tools.splice(i+1,0,copy);renderTools();renderCrates();renderViz();scheduleSave();
+    const el=document.getElementById('tn-'+copy.id);if(el&&el.focus){el.focus();el.select&&el.select()}
+    toast('Gekopieerd. Pas naam, maten of krat aan.');
+  }
   else if(act==='deltool'){state.tools=state.tools.filter(t=>t.id!==id);renderTools();renderViz();scheduleSave()}
   else if(act==='seat'){S().trunk.seat=b.dataset.v;renderTrunkForm();renderViz();scheduleSave()}
   else if(act==='machine'){S().machine=b.dataset.v;S().labels=b.dataset.v==='laser';renderSettings();renderViz();scheduleSave()}
