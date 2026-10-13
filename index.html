@@ -166,6 +166,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
 .s-comp{fill:none;stroke:var(--line-strong);stroke-width:1;stroke-dasharray:4 4}
 .sheet-group{display:flex;flex-direction:column}
 .sheet-group h3{padding:14px 16px 0}
+#view3d canvas{display:block;width:100%;border-radius:0 0 4px 4px}
 @media (prefers-reduced-motion:no-preference){button{transition:filter .15s,border-color .15s}}
 </style>
 
@@ -180,7 +181,7 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
       <div class="save" id="save"><i></i><span>Laden…</span></div>
     </div>
     <nav>
-      <a href="#kofferbak">Kofferbak</a><a href="#kratten">Kratten</a><a href="#gereedschap">Gereedschap</a><a href="#snijbestanden">Snijbestanden</a><a href="#instellingen">Instellingen</a>
+      <a href="#kofferbak">Kofferbak</a><a href="#weergave3d">3D</a><a href="#kratten">Kratten</a><a href="#gereedschap">Gereedschap</a><a href="#snijbestanden">Snijbestanden</a><a href="#instellingen">Instellingen</a>
     </nav>
     <div class="chips" id="chips"></div>
   </header>
@@ -193,6 +194,18 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
         <div id="trunkForm" style="display:flex;flex-direction:column;gap:12px"></div>
         <ul class="notes" id="trunkNotes"></ul>
       </div>
+    </div>
+  </section>
+
+  <section id="weergave3d">
+    <div class="sec-head"><h2>3D</h2><p>Slepen om te draaien, scrollen om te zoomen, rechts slepen om te verschuiven. Schotten zijn donkerder, gereedschap is doorschijnend.</p></div>
+    <div class="card">
+      <div class="sheet-ctl">
+        <label for="v3-sel">Weergave</label><select id="v3-sel"></select>
+        <label><input type="checkbox" id="v3-tools" checked> gereedschap tonen</label>
+        <button data-act="v3fit">Beeld passend maken</button>
+      </div>
+      <div id="view3d" style="min-height:300px;touch-action:none"></div>
     </div>
   </section>
 
@@ -227,6 +240,8 @@ tr.unassigned td:first-child{box-shadow:inset 3px 0 0 var(--warn)}
   </section>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script>
 (function(){
 "use strict";
@@ -334,7 +349,7 @@ function packBin(items,W,H,gap,portrait){
   return{placed,left};
 }
 /* kleinste rechthoek waarin items passen, met breedte (w) hoogstens maxW */
-function minRect(items,gap,maxW){
+function minRect(items,gap,maxW,k=0.25){
   if(!items.length)return null;
   const wmin=Math.max(...items.map(i=>Math.min(i.w,i.h)));
   if(wmin>maxW+1e-6)return null;
@@ -345,7 +360,7 @@ function minRect(items,gap,maxW){
     const Wc=Math.min(W,wmax),r=packBin(items,Wc,1e7,gap);if(r.left.length)continue;
     // kleinste oppervlakte, maar lange smalle stroken tellen zwaarder: die passen slecht in een krat
     const w=Math.max(...r.placed.map(p=>p.x+p.w)),h=Math.max(...r.placed.map(p=>p.y+p.h));
-    const a=w*h*(1+0.25*(Math.max(w,h)/Math.min(w,h)-1));
+    const a=w*h*(1+k*(Math.max(w,h)/Math.min(w,h)-1));
     if(!best||a<best.a-1e-6)best={w,h,a};
   }
   return best;
@@ -366,11 +381,13 @@ function toolItems(list){
   return out;
 }
 function crateTools(c){return state.tools.filter(t=>t.crate===c.id)}
+/* hoe zwaar een langgerekte vorm telt: vierkant (standaard) of zo klein mogelijk */
+function shapeK(c){return c.shape==='compact'?0.1:1.2}
 function crateInner(c){const t=S().t;return{L:c.L-2*t,W:c.W-2*t,H:c.H-t}}
 
 /* ---------- indeling met vakken ---------- */
 function buildComps(c){
-  const s=S(),t=+s.t,cl=+s.clearance,bt=+s.binT||6;
+  const s=S(),t=+s.t,cl=+s.clearance,bt=+s.binT||6,k=shapeK(c);
   const Wi=c.W-2*t,Hi=c.H-t;
   const groups=new Map();
   crateTools(c).forEach(tl=>{
@@ -383,21 +400,21 @@ function buildComps(c){
     const items=toolItems(g.tools);if(!items.length)continue;
     const Hmax=Math.max(...items.map(i=>i.H));
     if(g.mode==='bak'){
-      const r=minRect(items,cl,Wi-2*BIN_GAP-2*bt-cl);
+      const r=minRect(items,cl,Wi-2*BIN_GAP-2*bt-cl,k);
       if(!r){notes.push(['bad',`${esc(g.label)} is te groot voor een losse bak in deze krat.`]);continue}
       const b={label:g.label,items,w:Math.max(Math.ceil(r.w+cl+2*bt),4*bt+30),h:Math.max(Math.ceil(r.h+cl+2*bt),4*bt+30),
         H:Math.max(3*bt+20,Math.ceil((Hmax+bt+5)/5)*5)};
       if(b.H>Hi)notes.push(['warn',`Bak ${esc(g.label)} (${b.H} mm) is hoger dan de krat van binnen.`]);
       bins.push(b);
     }else{
-      const r=minRect(items,cl,Wi-cl);
+      const r=minRect(items,cl,Wi-cl,k);
       if(!r){notes.push(['bad',`${esc(g.label)} is te breed voor deze krat.`]);continue}
       if(Hmax>Hi)notes.push(['warn',`${esc(g.label)} steekt ${fmt(Hmax-Hi)} mm boven de rand uit.`]);
       comps.push({kind:'schot',label:g.label,items,w:r.w+cl,h:r.h+cl,Hmax});
     }
   }
   if(bins.length){
-    const r=minRect(bins.map(b=>({w:b.w,h:b.h,bin:b})),BIN_GAP,Wi-2*BIN_GAP);
+    const r=minRect(bins.map(b=>({w:b.w,h:b.h,bin:b})),BIN_GAP,Wi-2*BIN_GAP,k);
     if(r)comps.push({kind:'bak',label:'Bakken',bins,w:r.w+2*BIN_GAP,h:r.h+2*BIN_GAP,Hmax:Math.max(...bins.map(b=>b.H))});
     else notes.push(['bad','De losse bakken passen niet in de breedte van deze krat.']);
   }
@@ -424,7 +441,7 @@ function arrange(c,built){
 }
 const layoutCache=new Map();
 function crateLayout(c){
-  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,s,crateTools(c)]);
+  const s=S(),key=JSON.stringify([c.L,c.W,c.H,c.handles,c.shape,s,crateTools(c)]);
   if(layoutCache.has(key))return layoutCache.get(key);
   const t=+s.t,cl=+s.clearance,bt=+s.binT||6,Hi=c.H-t;
   const built=buildComps(c),ar=arrange(c,built);
@@ -444,42 +461,39 @@ function crateLayout(c){
   return ar;
 }
 function fitCrate(c){
-  const s=S(),t=+s.t,cl=+s.clearance;
-  if(!layoutOn(c)){
-    const items=toolItems(crateTools(c));if(!items.length)return false;
-    const minW=Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+2*cl;
-    const W=Math.max(c.W,Math.ceil(minW/5)*5);
-    for(let L=Math.ceil(minW/5)*5;L<=3000;L+=5){
-      if(!packBin(items,L-2*t-cl,W-2*t-cl,cl).left.length){c.L=L;c.W=W;c.H=Math.ceil((Math.max(...items.map(i=>i.H))+cl+t)/5)*5;return true}
-    }
-    return false;
-  }
-  // Probeer breedtes vanaf de huidige; voorkeur voor een maat waarbij alle panelen op de plaat passen, dan de kleinste vloer.
+  // Alle breedtes proberen; per breedte de kortste lengte. Voorkeur: past op de plaat en in de kofferbak, dan de vorm.
+  const s=S(),t=+s.t,cl=+s.clearance,k=shapeK(c);
+  const items=toolItems(crateTools(c));if(!items.length)return false;
   const[SW,SH]=sheetSize(),onSheet=(a,b)=>(a<=SW-10&&b<=SH-10)||(b<=SW-10&&a<=SH-10);
   const tg=trunkGeom(),inTrunk=(L,W,H)=>(!tg.H||H<=tg.H)&&packTrunk([{w:L,h:W,maxD:tg.depthAt(H)}],tg.W,tg.D,tg.obst,0).placed.length===1;
-  let best=null,atW=null;
-  for(let W=+c.W;W<=+c.W+1000;W+=10){
-    const tmp=Object.assign({},c,{W,H:5000});
-    const built=buildComps(tmp);
-    if(built.notes.some(n=>n[0]==='bad')||!built.comps.length)continue;
-    const H=Math.max(3*t+20,Math.ceil((Math.max(...built.comps.map(cp=>cp.Hmax))+cl+t)/5)*5);
-    const start=Math.ceil((2*t+Math.min(...built.comps.map(cp=>Math.min(cp.w,cp.h))))/5)*5;
-    for(let L=start;L<=3000;L+=5){
-      tmp.L=L;
-      if(arrange(tmp,built).left.length)continue;
-      const sheetOk=onSheet(L,H)&&onSheet(W,H)&&onSheet(L,W),trunkOk=inTrunk(L,W,H);
-      const cand={L,W,H,area:L*W,score:(sheetOk?0:2)+(trunkOk?0:1)};
-      if(W===+c.W)atW=cand;
-      if(cand.score<3&&(!best||cand.score<best.score||(cand.score===best.score&&cand.area<best.area-1)))best=cand;
+  const minW=Math.ceil((Math.max(...items.map(i=>Math.min(i.w,i.h)))+2*t+cl)/10)*10;
+  let best=null;
+  for(let W=Math.max(minW,4*t+30);W<=1600;W+=10){
+    let H,start,ok;
+    if(layoutOn(c)){
+      const tmp=Object.assign({},c,{W,H:5000}),built=buildComps(tmp);
+      if(built.notes.some(n=>n[0]==='bad')||!built.comps.length)continue;
+      H=Math.ceil((Math.max(...built.comps.map(cp=>cp.Hmax))+cl+t)/5)*5;
+      start=Math.ceil((2*t+Math.min(...built.comps.map(cp=>Math.min(cp.w,cp.h))))/5)*5;
+      ok=L=>{tmp.L=L;return!arrange(tmp,built).left.length};
+    }else{
+      H=Math.ceil((Math.max(...items.map(i=>i.H))+cl+t)/5)*5;
+      start=minW;
+      ok=L=>!packBin(items,L-2*t-cl,W-2*t-cl,cl).left.length;
+    }
+    H=Math.max(3*t+20,H);
+    for(let L=Math.max(start,4*t+30);L<=3000;L+=5){
+      if(!ok(L))continue;
+      const fit=(onSheet(L,H)&&onSheet(W,H)&&onSheet(L,W)?0:2)+(inTrunk(L,W,H)?0:1);
+      const cost=L*W*(1+k*(Math.max(L,W)/Math.min(L,W)-1));
+      if(!best||fit<best.fit||(fit===best.fit&&cost<best.cost-1))best={L,W,H,fit,cost};
       break;
     }
   }
-  // Past niets op de plaat, houd dan de huidige breedte aan
-  best=best||atW;
   if(!best)return false;
-  c.L=best.L;c.W=best.W;c.H=best.H;
+  // lengte is de langste kant
+  c.L=Math.max(best.L,best.W);c.W=Math.min(best.L,best.W);c.H=best.H;
   return true;
-  return false;
 }
 
 /* ---------- vingerverbindingen ---------- */
@@ -530,7 +544,7 @@ function dividerPanels(c,lay){
   const holes={front:[],back:[],left:[],right:[],bottom:[]},panels=[];
   lay.cross.forEach((cd,i)=>{
     const bt=btabs(Wi);
-    const p={name:'dwarsschot '+(i+1),kind:'cross',w:Wi+2*t,h:Hd+t,t,pts:tabbedRect(Wi,Hd,t,bt,wallBands,wallBands),holes:[]};
+    const p={x:cd.x,name:'dwarsschot '+(i+1),kind:'cross',w:Wi+2*t,h:Hd+t,t,pts:tabbedRect(Wi,Hd,t,bt,wallBands,wallBands),holes:[]};
     cd.panel=p;panels.push(p);
     wallBands.forEach(([a,b])=>{holes.front.push([cd.x,t+a,cd.x+t,t+b]);holes.back.push([cd.x,t+a,cd.x+t,t+b])});
     bt.forEach(([a,b])=>holes.bottom.push([cd.x,t+a,cd.x+t,t+b]));
@@ -539,7 +553,7 @@ function dividerPanels(c,lay){
     const len=sd.xe-sd.xs,bt=btabs(len);
     const pick=(order,wall)=>{for(const b of order){if(wall!=='cross'&&hits(sd.y,b))continue;return b}return null};
     const st=pick([A,B],sd.startWall),en=pick([B,A],sd.endWall);
-    const p={name:'tussenschot '+(j+1),kind:'sub',w:len+2*t,h:Hd+t,t,pts:tabbedRect(len,Hd,t,bt,en?[en]:[],st?[st]:[]),holes:[]};
+    const p={xs:sd.xs,y:sd.y,name:'tussenschot '+(j+1),kind:'sub',w:len+2*t,h:Hd+t,t,pts:tabbedRect(len,Hd,t,bt,en?[en]:[],st?[st]:[]),holes:[]};
     panels.push(p);
     bt.forEach(([a,b])=>holes.bottom.push([sd.xs+a,sd.y,sd.xs+b,sd.y+t]));
     if(st){const h=[sd.y,t+st[0],sd.y+t,t+st[1]];if(sd.startWall==='L')holes.left.push(h);else lay.cross[sd.bay-1].panel.holes.push(h)}
@@ -763,6 +777,7 @@ function renderTrunk(){
   }else notes.push(['','Voeg een krat toe om te zien hoe alles past.']);
   $('#trunkNotes').innerHTML=notes.map(([c,t])=>`<li class="${c}">${t}</li>`).join('');
   res.tooTall=valid.filter(c=>(H>0&&+c.H>H)||!passesOpening(c)).length;
+  lastTrunk={res,tg};
   return res;
 }
 /* zijaanzicht: achterklep rechts, achterbank links */
@@ -862,9 +877,11 @@ function renderCrates(){
       <div class="field"><label for="cw-${c.id}">Breedte</label><input type="number" step="any" id="cw-${c.id}" value="${c.W}" data-s="crate" data-id="${c.id}" data-k="W"></div>
       <div class="field"><label for="ch-${c.id}">Hoogte</label><input type="number" step="any" id="ch-${c.id}" value="${c.H}" data-s="crate" data-id="${c.id}" data-k="H"></div>
       <div class="field"><label for="cy-${c.id}">Indeling</label><select id="cy-${c.id}" data-s="crate" data-id="${c.id}" data-k="layout"><option value="vakken" ${layoutOn(c)?'selected':''}>Vakken</option><option value="vrij" ${layoutOn(c)?'':'selected'}>Vrij, geen schotten</option></select></div>
+      <div class="field"><label for="cs-${c.id}">Vorm</label><select id="cs-${c.id}" data-s="crate" data-id="${c.id}" data-k="shape"><option value="vierkant" ${c.shape!=='compact'?'selected':''}>Vierkant</option><option value="compact" ${c.shape==='compact'?'selected':''}>Compact</option></select></div>
       <label style="align-self:center"><input type="checkbox" id="cg-${c.id}" ${c.handles?'checked':''} data-s="crate" data-id="${c.id}" data-k="handles"> handgrepen</label>
       <span class="spacer"></span>
-      <button data-act="fit" data-id="${c.id}" title="Kleinste lengte en hoogte waarin het toegewezen gereedschap past, bij de huidige breedte">Maat op inhoud</button>
+      <button data-act="swap" data-id="${c.id}" title="Lengte en breedte omwisselen">↻ L/B</button>
+      <button data-act="fit" data-id="${c.id}" title="Zoekt de kleinste krat in de gekozen vorm waarin het toegewezen gereedschap past, bij voorkeur passend op de plaat en in de kofferbak">Maat op inhoud</button>
       <button class="ghost" data-act="delcrate" data-id="${c.id}">Verwijder</button>
     </div>
     <div class="crate-body" id="cv-${c.id}"></div>
@@ -963,8 +980,142 @@ function renderSettings(){
 }
 let vizQueued=false;
 function renderViz(){if(vizQueued)return;vizQueued=true;requestAnimationFrame(()=>{vizQueued=false;
-  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr)})}
-function renderAll(){renderTrunkForm();renderCrates();renderTools();renderSettings();renderViz()}
+  const tr=renderTrunk();renderCrateViz();const nest=renderSheets();renderChips(nest,tr);try{render3d()}catch(e){console.error(e)}})}
+function renderAll(){renderTrunkForm();fill3dSelect();renderCrates();renderTools();renderSettings();renderViz()}
+
+/* ---------- 3D ---------- */
+let lastTrunk=null,three=null,view3d='trunk',tools3d=true,fit3d=true;
+function cssVar(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()||'#888'}
+function init3d(){
+  if(three)return true;
+  const host=$('#view3d');
+  if(!window.THREE||!THREE.OrbitControls){host.innerHTML='<div class="empty"><b>3D niet beschikbaar</b><p>De 3D-bibliotheek kon niet laden. Zonder internet werkt deze weergave niet.</p></div>';return false}
+  const r=new THREE.WebGLRenderer({antialias:true});
+  r.setPixelRatio(Math.min(2,window.devicePixelRatio||1));
+  host.appendChild(r.domElement);
+  const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(35,1.6,5,30000);
+  cam.up.set(0,0,1);
+  scene.add(new THREE.HemisphereLight(0xffffff,0x555555,0.85));
+  const sun=new THREE.DirectionalLight(0xffffff,0.55);sun.position.set(-0.6,-1,1.4);scene.add(sun);
+  const controls=new THREE.OrbitControls(cam,r.domElement);
+  controls.enableDamping=false;
+  const draw=()=>r.render(scene,cam);
+  controls.addEventListener('change',draw);
+  three={r,scene,cam,controls,draw,root:null,host};
+  new ResizeObserver(size3d).observe(host);
+  size3d();
+  return true;
+}
+function size3d(){
+  if(!three)return;
+  const w=three.host.clientWidth||600,h=Math.round(Math.min(560,Math.max(300,w*0.62)));
+  three.r.setSize(w,h);three.cam.aspect=w/h;three.cam.updateProjectionMatrix();three.draw();
+}
+function mat3(color,opts){return new THREE.MeshStandardMaterial(Object.assign({color:new THREE.Color(color),roughness:0.85,metalness:0},opts||{}))}
+function panelMesh(p,material,edgeColor){
+  const sh=new THREE.Shape(outline(p).map(([x,y])=>new THREE.Vector2(x,y)));
+  (p.holes||[]).forEach(([u0,v0,u1,v1])=>{const h=new THREE.Path();h.moveTo(u0,v0);h.lineTo(u1,v0);h.lineTo(u1,v1);h.lineTo(u0,v1);h.lineTo(u0,v0);sh.holes.push(h)});
+  const hb=handleBox(p,S());
+  if(hb){const r=hb.h/2,h=new THREE.Path();
+    h.absarc(hb.cx-hb.w/2+r,hb.cy,r,Math.PI/2,Math.PI*1.5,false);h.lineTo(hb.cx+hb.w/2-r,hb.cy-r);
+    h.absarc(hb.cx+hb.w/2-r,hb.cy,r,-Math.PI/2,Math.PI/2,false);h.lineTo(hb.cx-hb.w/2+r,hb.cy+r);sh.holes.push(h)}
+  const geo=new THREE.ExtrudeGeometry(sh,{depth:p.t,bevelEnabled:false,curveSegments:10});
+  const g=new THREE.Group();
+  g.add(new THREE.Mesh(geo,material));
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo,25),new THREE.LineBasicMaterial({color:new THREE.Color(edgeColor)})));
+  return g;
+}
+/* plat paneel (u,v, dikte w) naar zijn plek in de krat (X lengte, Y breedte, Z omhoog) */
+function panelMatrix(p,L,W){
+  const t=p.t,M=new THREE.Matrix4();
+  switch(p.kind){
+    case'front':M.set(1,0,0,0, 0,0,-1,t, 0,1,0,0, 0,0,0,1);break;
+    case'back':M.set(1,0,0,0, 0,0,-1,W, 0,1,0,0, 0,0,0,1);break;
+    case'left':M.set(0,0,1,0, 1,0,0,0, 0,1,0,0, 0,0,0,1);break;
+    case'right':M.set(0,0,1,L-t, 1,0,0,0, 0,1,0,0, 0,0,0,1);break;
+    case'cross':M.set(0,0,1,p.x, 1,0,0,0, 0,1,0,0, 0,0,0,1);break;
+    case'sub':M.set(1,0,0,p.xs-t, 0,0,-1,p.y+t, 0,1,0,0, 0,0,0,1);break;
+    default:M.identity();
+  }
+  return M;
+}
+function toolBox(r,z,H){
+  const tl=r.it.tool,i=Math.max(0,CATS.indexOf(tl.cat));
+  const geo=new THREE.BoxGeometry(r.SX,r.SY,Math.max(H,1)),g=new THREE.Group();
+  g.add(new THREE.Mesh(geo,mat3(cssVar('--c'+i),{transparent:true,opacity:0.7,emissive:new THREE.Color(cssVar('--c'+i)),emissiveIntensity:0.25})));
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:new THREE.Color(cssVar('--ink'))})));
+  g.position.set(r.X+r.SX/2,r.Y+r.SY/2,z+Math.max(H,1)/2);
+  return g;
+}
+function crateGroup(c){
+  const s=S(),t=+s.t,bt=+s.binT||6,L=+c.L,W=+c.W,g=new THREE.Group();
+  const ply=mat3(cssVar('--ply')),dark=mat3(cssVar('--ply-edge')),edge=cssVar('--ply-edge'),edgeDark=cssVar('--ink');
+  cratePanels(c).forEach(p=>{const m=panelMesh(p,p.kind==='cross'||p.kind==='sub'?dark:ply,p.kind==='cross'||p.kind==='sub'?edgeDark:edge);m.applyMatrix4(panelMatrix(p,L,W));g.add(m)});
+  if(layoutOn(c)){
+    const lay=crateLayout(c);
+    lay.comps.forEach(cp=>{
+      if(cp.kind==='schot'){if(tools3d)cp.tools.forEach(r=>g.add(toolBox(r,t,r.it.H)))}
+      else cp.binsPlaced.forEach(b=>{
+        const bg=new THREE.Group();
+        boxPanels(b.L,b.W,b.H,bt,+s.binFinger||20,false).forEach(p=>{const m=panelMesh(p,ply,edge);m.applyMatrix4(panelMatrix(p,b.L,b.W));bg.add(m)});
+        bg.position.set(b.X,b.Y,t);g.add(bg);
+        if(tools3d)b.tools.forEach(r=>g.add(toolBox(r,t+bt,r.it.H)));
+      });
+    });
+  }else if(tools3d){
+    const cl=+s.clearance,res=packBin(toolItems(crateTools(c)),L-2*t-cl,W-2*t-cl,cl);
+    res.placed.forEach(p=>g.add(toolBox({X:t+cl/2+p.y,Y:t+cl/2+p.x,SX:p.h,SY:p.w,it:p.it},t,p.it.H)));
+  }
+  return g;
+}
+function trunkGroup(){
+  const g=new THREE.Group();if(!lastTrunk)return g;
+  const{res,tg}=lastTrunk,{W,D,H,obst}=tg,top=H||Math.max(400,...state.crates.map(c=>+c.H));
+  const line=new THREE.LineBasicMaterial({color:new THREE.Color(cssVar('--muted'))});
+  const floor=new THREE.Mesh(new THREE.BoxGeometry(W,D,4),mat3(cssVar('--line')));floor.position.set(W/2,D/2,-2);g.add(floor);
+  obst.forEach(o=>{const m=new THREE.Mesh(new THREE.BoxGeometry(o.w,o.h,Math.min(top,250)),mat3(cssVar('--line-strong')));m.position.set(o.x+o.w/2,o.y+o.h/2,Math.min(top,250)/2);g.add(m)});
+  // rugleuning (achterkant van de kofferbak, y = D) en hoedenplank
+  const yTop=tg.sloped?tg.dTop:D;
+  const seat=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,D,0),new THREE.Vector3(W,D,0),new THREE.Vector3(W,yTop,top),new THREE.Vector3(0,D,0),new THREE.Vector3(W,yTop,top),new THREE.Vector3(0,yTop,top)]);
+  seat.computeVertexNormals();
+  g.add(new THREE.Mesh(seat,new THREE.MeshBasicMaterial({color:new THREE.Color(cssVar('--muted')),transparent:true,opacity:0.18,side:THREE.DoubleSide})));
+  const pts=[[0,0,0],[W,0,0],[W,D,0],[0,D,0],[0,0,0],[0,0,top],[W,0,top],[W,0,0],[W,0,top],[W,yTop,top],[W,D,0],[0,D,0],[0,yTop,top],[0,0,top],[0,yTop,top],[W,yTop,top]];
+  g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x,y,z])=>new THREE.Vector3(x,y,z))),line));
+  res.placed.forEach(p=>{
+    const c=p.it.c,cg=crateGroup(c);
+    // packTrunk: x over de breedte, y vanaf de achterklep; gedraaid = lengte in de diepte
+    if(p.rot){cg.rotation.z=Math.PI/2;cg.position.set(p.x+ +c.W,p.y,0)}else cg.position.set(p.x,p.y,0);
+    g.add(cg);
+  });
+  return g;
+}
+function dispose3d(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose();if(o.material)o.material.dispose()})}
+function render3d(){
+  if(!init3d())return;
+  const{scene,cam,controls}=three;
+  if(three.root){scene.remove(three.root);dispose3d(three.root)}
+  three.r.setClearColor(new THREE.Color(cssVar('--panel')),1);
+  const c=state.crates.find(x=>x.id===view3d);
+  three.root=c&&crateValid(c)?crateGroup(c):trunkGroup();
+  scene.add(three.root);
+  if(fit3d){
+    const box=new THREE.Box3().setFromObject(three.root);
+    if(!box.isEmpty()){
+      const ctr=box.getCenter(new THREE.Vector3()),size=box.getSize(new THREE.Vector3()).length();
+      controls.target.copy(ctr);
+      // van achter de auto, schuin van boven (achterklep is y = 0)
+      cam.position.set(ctr.x-size*0.45,ctr.y-size*1.05,ctr.z+size*0.75);
+      cam.near=size/100;cam.far=size*20;cam.updateProjectionMatrix();controls.update();
+    }
+    fit3d=false;
+  }
+  three.draw();
+}
+function fill3dSelect(){
+  const sel=$('#v3-sel');if(!sel||!sel.tagName)return;
+  if(view3d!=='trunk'&&!state.crates.some(c=>c.id===view3d))view3d='trunk';
+  sel.innerHTML=`<option value="trunk">Kofferbak met alle kratten</option>`+state.crates.map(c=>`<option value="${c.id}" ${c.id===view3d?'selected':''}>${esc(c.name)}</option>`).join('');
+}
 
 /* ---------- interactie ---------- */
 function setPath(obj,path,v){const ks=path.split('.');let o=obj;for(let i=0;i<ks.length-1;i++)o=o[ks[i]];o[ks[ks.length-1]]=v}
@@ -986,6 +1137,8 @@ document.addEventListener('change',e=>{
     if(car){Object.keys(car).forEach(k=>{if(k!=='label'&&k!=='note')tr[k]=Array.isArray(car[k])?car[k].slice():car[k]})}else tr.est=[];
     renderTrunkForm();renderViz();scheduleSave();toast(car?`Maten van de ${car.label} ingevuld.`:'Eigen maten: vul ze hieronder in.');return;
   }
+  if(el.id==='v3-sel'){view3d=el.value;fit3d=true;render3d();return}
+  if(el.id==='v3-tools'){tools3d=el.checked;render3d();return}
   if(el.dataset.act==='toggleex'){el.checked?excluded.delete(el.dataset.id):excluded.add(el.dataset.id);renderViz();return}
   if(el.id==='importFile'&&el.files&&el.files[0]){
     el.files[0].text().then(txt=>{const d=JSON.parse(txt);if(!d||!Array.isArray(d.tools))throw 0;
@@ -993,7 +1146,7 @@ document.addEventListener('change',e=>{
     el.value='';return;
   }
   const{s,k}=el.dataset;
-  if(s==='crate'&&k==='name')renderTools();
+  if(s==='crate'&&k==='name'){renderTools();fill3dSelect()}
   if(s==='tool'&&(k==='crate'||k==='cat'||k==='group'))renderTools();
   if(s==='set'&&k==='t')renderSettings();
 });
@@ -1008,6 +1161,8 @@ document.addEventListener('click',async e=>{
   else if(act==='delcrate'){
     if(!armed[id]){armed[id]=true;b.textContent='Zeker weten?';b.classList.add('danger');setTimeout(()=>{armed[id]=false;if(b.isConnected){b.textContent='Verwijder';b.classList.remove('danger')}},3000);return}
     state.crates=state.crates.filter(c=>c.id!==id);state.tools.forEach(t=>{if(t.crate===id)t.crate=''});excluded.delete(id);renderAll();scheduleSave();toast('Krat verwijderd; het gereedschap staat weer als niet ingedeeld.')}
+  else if(act==='v3fit'){fit3d=true;render3d()}
+  else if(act==='swap'){const c=state.crates.find(x=>x.id===id);if(!c)return;[c.L,c.W]=[c.W,c.L];renderAll();scheduleSave()}
   else if(act==='fit'){const c=state.crates.find(x=>x.id===id);if(!c)return;
     if(!toolItems(crateTools(c)).length){toast('Wijs eerst gereedschap toe aan deze krat.');return}
     if(fitCrate(c)){renderAll();scheduleSave();toast(`${c.name} is nu ${c.L} × ${c.W} × ${c.H} mm.`)}else toast('Geen passende maat gevonden.')}
