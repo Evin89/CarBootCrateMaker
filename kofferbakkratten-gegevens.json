@@ -1,72 +1,11 @@
 {
   "v": 1,
-  "settings": {
-    "t": 9,
-    "machine": "laser",
-    "kerf": 0.2,
-    "bit": 6,
-    "finger": 30,
-    "clearance": 10,
-    "gap": 6,
-    "labels": true,
-    "handleW": 110,
-    "handleH": 32,
-    "laserBed": [
-      813,
-      508
-    ],
-    "cncSheet": [
-      2440,
-      1220
-    ],
-    "trunk": {
-      "model": "c3ii",
-      "w": 1060,
-      "archW": 0,
-      "archFrom": 0,
-      "archLen": 0,
-      "d": 740,
-      "dTop": 500,
-      "h": 550,
-      "dFolded": 1100,
-      "seat": "up",
-      "openW": 1030,
-      "openH": 880,
-      "est": [
-        "d"
-      ]
-    }
-  },
-  "crates": [
-    {
-      "id": "krata",
-      "name": "Krat A",
-      "L": 600,
-      "W": 400,
-      "H": 300,
-      "handles": true
-    }
-  ],
+  "settings": {"t": 9, "machine": "laser", "kerf": 0.2, "bit": 6, "finger": 30, "clearance": 10, "gap": 6, "labels": true, "handleW": 110, "handleH": 32,
+    "laserBed": [813, 508], "cncSheet": [2440, 1220],
+    "trunk": {"model": "", "w": 1100, "d": 820, "dTop": 600, "h": 560, "archW": 0, "archFrom": 0, "archLen": 0, "dFolded": 1300, "seat": "up", "openW": 1000, "openH": 800, "est": []}},
+  "crates": [{"id": "krata", "name": "Krat A", "L": 600, "W": 400, "H": 300, "handles": true}],
   "tools": [
-    {
-      "id": "decoup",
-      "name": "Decoupeerzaag",
-      "cat": "Zaag",
-      "l": 290,
-      "w": 80,
-      "h": 210,
-      "qty": 1,
-      "crate": "krata"
-    },
-    {
-      "id": "accutol",
-      "name": "Accutol",
-      "cat": "Accutol / boor",
-      "l": 240,
-      "w": 100,
-      "h": 230,
-      "qty": 1,
-      "crate": "krata"
-    }
+    {"id": "decoup", "name": "Decoupeerzaag", "cat": "Zaag", "l": 280, "w": 85, "h": 200, "qty": 1, "crate": "krata"},
+    {"id": "accutol", "name": "Accuboormachine", "cat": "Accutol / boor", "l": 230, "w": 95, "h": 220, "qty": 1, "crate": "krata"}
   ]
 }
